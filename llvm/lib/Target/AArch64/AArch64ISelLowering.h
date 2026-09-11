@@ -711,6 +711,14 @@ private:
   template <class NodeTy>
   SDValue getAddrLarge(NodeTy *N, SelectionDAG &DAG, unsigned Flags = 0) const;
   template <class NodeTy>
+  SDValue getAddrLargePIC(NodeTy *N, SelectionDAG &DAG,
+                          unsigned Flags = 0) const;
+  template <class NodeTy>
+  SDValue getGOTLargePIC(NodeTy *N, SelectionDAG &DAG,
+                         unsigned Flags = 0) const;
+  SDValue getGOTBaseLargePIC(const SDLoc &DL, SelectionDAG &DAG) const;
+
+  template <class NodeTy>
   SDValue getAddr(NodeTy *N, SelectionDAG &DAG, unsigned Flags = 0) const;
   template <class NodeTy>
   SDValue getAddrTiny(NodeTy *N, SelectionDAG &DAG, unsigned Flags = 0) const;

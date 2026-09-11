@@ -49,10 +49,10 @@ body:             |
     ; STATIC-NEXT: RET_ReallyLR implicit $w0
     ;
     ; PIC-LABEL: name: gv_large
-    ; PIC: [[MOVaddr:%[0-9]+]]:gpr64common = MOVaddr target-flags(aarch64-page) @foo1, target-flags(aarch64-pageoff, aarch64-nc) @foo1
-    ; PIC-NEXT: [[COPY:%[0-9]+]]:gpr64sp = COPY [[MOVaddr]]
-    ; PIC-NEXT: [[MOVaddr1:%[0-9]+]]:gpr64common = MOVaddr target-flags(aarch64-page) @foo2, target-flags(aarch64-pageoff, aarch64-nc) @foo2
-    ; PIC-NEXT: [[COPY1:%[0-9]+]]:gpr64sp = COPY [[MOVaddr1]]
+    ; PIC: [[MOVaddrPREL:%[0-9]+]]:gpr64noip = MOVaddrPREL @foo1, implicit-def $x17
+    ; PIC-NEXT: [[COPY:%[0-9]+]]:gpr64sp = COPY [[MOVaddrPREL]]
+    ; PIC-NEXT: [[MOVaddrPREL1:%[0-9]+]]:gpr64noip = MOVaddrPREL @foo2, implicit-def $x17
+    ; PIC-NEXT: [[COPY1:%[0-9]+]]:gpr64sp = COPY [[MOVaddrPREL1]]
     ; PIC-NEXT: STRWui $wzr, %stack.0.retval, 0 :: (store (i32) into %ir.retval)
     ; PIC-NEXT: [[LDRWui:%[0-9]+]]:gpr32 = LDRWui [[COPY]], 0 :: (load (i32) from @foo1)
     ; PIC-NEXT: [[LDRWui1:%[0-9]+]]:gpr32 = LDRWui [[COPY1]], 0 :: (load (i32) from @foo2)

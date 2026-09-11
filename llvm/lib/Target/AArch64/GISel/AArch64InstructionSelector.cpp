@@ -513,6 +513,8 @@ private:
 
   // Materialize a GlobalValue or BlockAddress using a movz+movk sequence.
   void materializeLargeCMVal(MachineInstr &I, const Value *V, unsigned OpFlags);
+  bool selectLargePICGlobalValue(MachineInstr &I, const GlobalValue *GV,
+                                 unsigned OpFlags);
 
   // Optimization methods.
   bool tryOptSelect(GSelect &Sel);
@@ -2134,6 +2136,88 @@ void AArch64InstructionSelector::materializeLargeCMVal(
   BuildMovK(DstReg, AArch64II::MO_G3, 48, I.getOperand(0).getReg());
 }
 
+// Select a G_GLOBAL_VALUE for the large position-independent code model. This
+// mirrors getAddrLargePIC / getGOTLargePIC in AArch64ISelLowering: a
+// non-preemptible symbol gets a direct full-range PC-relative address, and a
+// preemptible one is loaded from the GOT, which is itself reached PC-relatively
+// and indexed by a full 64-bit offset.
+bool AArch64InstructionSelector::selectLargePICGlobalValue(
+    MachineInstr &I, const GlobalValue *GV, unsigned OpFlags) {
+  MachineBasicBlock &MBB = *I.getParent();
+  MachineFunction &MF = *MBB.getParent();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
+  Register DstReg = I.getOperand(0).getReg();
+
+  // A signed GOT entry would need R_AARCH64_AUTH_MOVW_GOTOFF_G*, which is not
+  // implemented. Diagnose rather than falling through to LOADgotAUTH, which is
+  // ADRP-based and so cannot reach in this code model.
+  if ((OpFlags & AArch64II::MO_GOT) &&
+      MF.getInfo<AArch64FunctionInfo>()->hasELFSignedGOT())
+    MF.getFunction().getContext().diagnose(DiagnosticInfoUnsupported(
+        MF.getFunction(),
+        "signed GOT is not supported with the large code model and PIC",
+        I.getDebugLoc()));
+
+  if (!(OpFlags & AArch64II::MO_GOT)) {
+    I.setDesc(TII.get(AArch64::MOVaddrPREL));
+    I.getOperand(1).setTargetFlags(OpFlags);
+    // setDesc does not materialize the descriptor's implicit operands, and
+    // MOVaddrPREL clobbers x17. Without this the allocator would not see the
+    // clobber and could keep a live value in x17 across the expansion.
+    I.addImplicitDefUseOperands(MF);
+    constrainSelectedInstRegOperands(I, TII, TRI, RBI);
+    return true;
+  }
+
+  // MO_GOT combined with a granule lowers to the :gotoff_gN: specifiers, i.e.
+  // the offset of the symbol's GOT entry from the GOT base.
+  auto SymOperand = [&](unsigned Flags) {
+    MachineOperand MO = I.getOperand(1);
+    MO.setTargetFlags(Flags);
+    return MO;
+  };
+
+  auto MovZ = MIB.buildInstr(AArch64::MOVZXi, {&AArch64::GPR64RegClass}, {});
+  MovZ->addOperand(
+      MF, SymOperand(AArch64II::MO_GOT | AArch64II::MO_G0 | AArch64II::MO_NC));
+  MovZ->addOperand(MF, MachineOperand::CreateImm(0));
+  constrainSelectedInstRegOperands(*MovZ, TII, TRI, RBI);
+
+  Register Off = MovZ.getReg(0);
+  const std::pair<unsigned, unsigned> Chunks[] = {
+      {AArch64II::MO_GOT | AArch64II::MO_G1 | AArch64II::MO_NC, 16},
+      {AArch64II::MO_GOT | AArch64II::MO_G2 | AArch64II::MO_NC, 32},
+      {AArch64II::MO_GOT | AArch64II::MO_G3, 48},
+  };
+  for (auto [Flags, Shift] : Chunks) {
+    Register Next = MRI.createVirtualRegister(&AArch64::GPR64RegClass);
+    auto MovK = MIB.buildInstr(AArch64::MOVKXi).addDef(Next).addUse(Off);
+    MovK->addOperand(MF, SymOperand(Flags));
+    MovK->addOperand(MF, MachineOperand::CreateImm(Shift));
+    constrainSelectedInstRegOperands(*MovK, TII, TRI, RBI);
+    Off = Next;
+  }
+
+  Register GOTBase = MRI.createVirtualRegister(&AArch64::GPR64noipRegClass);
+  auto Base = MIB.buildInstr(AArch64::MOVaddrPREL, {GOTBase}, {})
+                  .addExternalSymbol("_GLOBAL_OFFSET_TABLE_");
+  constrainSelectedInstRegOperands(*Base, TII, TRI, RBI);
+
+  // ldr DstReg, [GOTBase, Off]
+  auto Ldr = MIB.buildInstr(AArch64::LDRXroX, {DstReg}, {GOTBase, Off})
+                 .addImm(0)
+                 .addImm(0);
+  Ldr.addMemOperand(MF.getMachineMemOperand(
+      MachinePointerInfo::getGOT(MF),
+      MachineMemOperand::MOLoad | MachineMemOperand::MOInvariant |
+          MachineMemOperand::MODereferenceable,
+      LLT::pointer(0, 64), Align(8)));
+  constrainSelectedInstRegOperands(*Ldr, TII, TRI, RBI);
+
+  I.eraseFromParent();
+  return true;
+}
+
 bool AArch64InstructionSelector::preISelLower(MachineInstr &I) {
   MachineBasicBlock &MBB = *I.getParent();
   MachineFunction &MF = *MBB.getParent();
@@ -2924,6 +3008,11 @@ bool AArch64InstructionSelector::select(MachineInstr &I) {
       OpFlags = STI.ClassifyGlobalReference(GV, TM);
     }
 
+    // The large PIC code model must not use LOADgot or MOVaddr below: both are
+    // ADRP-based, and escaping ADRP's +/-4GB range is the point of the model.
+    if (STI.isLargePIC())
+      return selectLargePICGlobalValue(I, GV, OpFlags);
+
     if (OpFlags & AArch64II::MO_GOT) {
       bool IsGOTSigned = MF.getInfo<AArch64FunctionInfo>()->hasELFSignedGOT();
       I.setDesc(TII.get(IsGOTSigned ? AArch64::LOADgotAUTH : AArch64::LOADgot));
@@ -3557,6 +3646,14 @@ bool AArch64InstructionSelector::select(MachineInstr &I) {
       I.eraseFromParent();
       return true;
     }
+    if (STI.isLargePIC()) {
+      auto MovMI =
+          MIB.buildInstr(AArch64::MOVaddrPREL, {I.getOperand(0).getReg()}, {})
+              .addBlockAddress(I.getOperand(1).getBlockAddress());
+      I.eraseFromParent();
+      constrainSelectedInstRegOperands(*MovMI, TII, TRI, RBI);
+      return true;
+    }
     if (TM.getCodeModel() == CodeModel::Large && !TM.isPositionIndependent()) {
       materializeLargeCMVal(I, I.getOperand(1).getBlockAddress(), 0);
       I.eraseFromParent();
@@ -3744,11 +3841,15 @@ bool AArch64InstructionSelector::selectJumpTable(MachineInstr &I,
 
   Register DstReg = I.getOperand(0).getReg();
   unsigned JTI = I.getOperand(1).getIndex();
-  // We generate a MOVaddrJT which will get expanded to an ADRP + ADD later.
-  auto MovMI =
-    MIB.buildInstr(AArch64::MOVaddrJT, {DstReg}, {})
-          .addJumpTableIndex(JTI, AArch64II::MO_PAGE)
-          .addJumpTableIndex(JTI, AArch64II::MO_NC | AArch64II::MO_PAGEOFF);
+  // We generate a MOVaddrJT which will get expanded to an ADRP + ADD later,
+  // except in the large PIC code model, where ADRP cannot reach.
+  auto MovMI = STI.isLargePIC()
+                   ? MIB.buildInstr(AArch64::MOVaddrPREL, {DstReg}, {})
+                         .addJumpTableIndex(JTI)
+                   : MIB.buildInstr(AArch64::MOVaddrJT, {DstReg}, {})
+                         .addJumpTableIndex(JTI, AArch64II::MO_PAGE)
+                         .addJumpTableIndex(JTI, AArch64II::MO_NC |
+                                                     AArch64II::MO_PAGEOFF);
   I.eraseFromParent();
   constrainSelectedInstRegOperands(*MovMI, TII, TRI, RBI);
   return true;
@@ -4254,6 +4355,15 @@ MachineInstr *AArch64InstructionSelector::emitLoadFromConstantPool(
   if (IsTiny && (Size == 16 || Size == 8 || Size == 4)) {
     // Use load(literal) for tiny code model.
     LoadMI = &*MIRBuilder.buildInstr(Opc, {RC}, {}).addConstantPoolIndex(CPIdx);
+  } else if (STI.isLargePIC()) {
+    // ADRP cannot reach in the large PIC code model; take the pool entry's
+    // address with a full-range PC-relative sequence and load from it.
+    auto Base =
+        MIRBuilder
+            .buildInstr(AArch64::MOVaddrPREL, {&AArch64::GPR64noipRegClass}, {})
+            .addConstantPoolIndex(CPIdx);
+    LoadMI = &*MIRBuilder.buildInstr(Opc, {RC}, {Base}).addImm(0);
+    constrainSelectedInstRegOperands(*Base, TII, TRI, RBI);
   } else {
     auto Adrp =
         MIRBuilder.buildInstr(AArch64::ADRP, {&AArch64::GPR64RegClass}, {})

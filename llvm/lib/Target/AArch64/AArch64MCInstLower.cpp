@@ -185,9 +185,18 @@ MCOperand AArch64MCInstLower::lowerSymbolOperandELF(const MachineOperand &MO,
 
   if (MO.getTargetFlags() & AArch64II::MO_GOT) {
     const MachineFunction *MF = MO.getParent()->getParent()->getParent();
-    RefFlags |= (MF->getInfo<AArch64FunctionInfo>()->hasELFSignedGOT()
-                     ? AArch64::S_GOT_AUTH
-                     : AArch64::S_GOT);
+    // The AUTH GOT specifiers are only defined for the page and page-offset
+    // fragments; there is no :got_auth_gN: form. A granule here comes from the
+    // large PIC code model, which does not support a signed GOT and has
+    // already reported that as an error, so fall back to the plain specifier
+    // rather than constructing one that does not exist.
+    unsigned Frag = MO.getTargetFlags() & AArch64II::MO_FRAGMENT;
+    bool IsGranule = Frag == AArch64II::MO_G0 || Frag == AArch64II::MO_G1 ||
+                     Frag == AArch64II::MO_G2 || Frag == AArch64II::MO_G3;
+    RefFlags |=
+        (MF->getInfo<AArch64FunctionInfo>()->hasELFSignedGOT() && !IsGranule
+             ? AArch64::S_GOT_AUTH
+             : AArch64::S_GOT);
   } else if (MO.getTargetFlags() & AArch64II::MO_TLS) {
     TLSModel::Model Model;
     if (MO.isGlobal()) {

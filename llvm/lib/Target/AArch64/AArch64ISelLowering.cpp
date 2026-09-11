@@ -11135,6 +11135,54 @@ SDValue AArch64TargetLowering::getAddrLarge(NodeTy *N, SelectionDAG &DAG,
       getTargetNode(N, Ty, DAG, AArch64II::MO_G0 | MO_NC | Flags));
 }
 
+// PC-relative address of a symbol, with a full 64-bit range.
+// (adr .Lpc) + (movz/movk %prel_g3..g0(sym))
+template <class NodeTy>
+SDValue AArch64TargetLowering::getAddrLargePIC(NodeTy *N, SelectionDAG &DAG,
+                                               unsigned Flags) const {
+  LLVM_DEBUG(dbgs() << "AArch64TargetLowering::getAddrLargePIC\n");
+  SDLoc DL(N);
+  EVT Ty = getPointerTy(DAG.getDataLayout());
+  return DAG.getNode(AArch64ISD::AddrPRELLarge, DL, Ty,
+                     getTargetNode(N, Ty, DAG, Flags));
+}
+
+// The GOT base, materialized PC-relatively with a full 64-bit range. Kept as
+// its own node so that repeated accesses in a function share one computation.
+SDValue AArch64TargetLowering::getGOTBaseLargePIC(const SDLoc &DL,
+                                                  SelectionDAG &DAG) const {
+  EVT Ty = getPointerTy(DAG.getDataLayout());
+  SDValue GOT = DAG.getTargetExternalSymbol("_GLOBAL_OFFSET_TABLE_", Ty);
+  return DAG.getNode(AArch64ISD::AddrPRELLarge, DL, Ty, GOT);
+}
+
+// Load a symbol's address out of the GOT, indexing the GOT by a full 64-bit
+// offset so that neither the GOT's distance from the code nor its size is
+// bounded. (ldr (add (gotbase) (movz/movk %gotoff_g3..g0(sym))))
+template <class NodeTy>
+SDValue AArch64TargetLowering::getGOTLargePIC(NodeTy *N, SelectionDAG &DAG,
+                                              unsigned Flags) const {
+  LLVM_DEBUG(dbgs() << "AArch64TargetLowering::getGOTLargePIC\n");
+  SDLoc DL(N);
+  EVT Ty = getPointerTy(DAG.getDataLayout());
+  const unsigned char MO_NC = AArch64II::MO_NC;
+  const unsigned char MO_GOT = AArch64II::MO_GOT;
+
+  // MO_GOT combined with a granule lowers to the :gotoff_gN: specifiers, i.e.
+  // the offset of the symbol's GOT entry from the GOT base.
+  SDValue Off = DAG.getNode(
+      AArch64ISD::WrapperLarge, DL, Ty,
+      getTargetNode(N, Ty, DAG, MO_GOT | AArch64II::MO_G3 | Flags),
+      getTargetNode(N, Ty, DAG, MO_GOT | AArch64II::MO_G2 | MO_NC | Flags),
+      getTargetNode(N, Ty, DAG, MO_GOT | AArch64II::MO_G1 | MO_NC | Flags),
+      getTargetNode(N, Ty, DAG, MO_GOT | AArch64II::MO_G0 | MO_NC | Flags));
+
+  SDValue Addr =
+      DAG.getNode(ISD::ADD, DL, Ty, getGOTBaseLargePIC(DL, DAG), Off);
+  return DAG.getLoad(Ty, DL, DAG.getEntryNode(), Addr,
+                     MachinePointerInfo::getGOT(DAG.getMachineFunction()));
+}
+
 // (addlow (adrp %hi(sym)) %lo(sym))
 template <class NodeTy>
 SDValue AArch64TargetLowering::getAddr(NodeTy *N, SelectionDAG &DAG,
@@ -11169,6 +11217,26 @@ SDValue AArch64TargetLowering::LowerGlobalAddress(SDValue Op,
   if (OpFlags != AArch64II::MO_NO_FLAG)
     assert(cast<GlobalAddressSDNode>(Op)->getOffset() == 0 &&
            "unexpected offset in global node");
+
+  // The large position-independent code model needs full-range sequences for
+  // both the GOT-indirect and the direct case; neither ADRP form reaches.
+  if (Subtarget->isLargePIC()) {
+    if ((OpFlags & AArch64II::MO_GOT) != 0) {
+      // A signed GOT entry would need R_AARCH64_AUTH_MOVW_GOTOFF_G*, which is
+      // not implemented. Diagnose rather than fall back: the unsigned sequence
+      // would silently drop the authentication, and LOADgotAUTH is ADRP-based
+      // so it cannot reach in this code model either.
+      if (DAG.getMachineFunction()
+              .getInfo<AArch64FunctionInfo>()
+              ->hasELFSignedGOT())
+        DAG.getContext()->diagnose(DiagnosticInfoUnsupported(
+            DAG.getMachineFunction().getFunction(),
+            "signed GOT is not supported with the large code model and PIC",
+            SDLoc(Op).getDebugLoc()));
+      return getGOTLargePIC(GN, DAG, OpFlags & ~AArch64II::MO_GOT);
+    }
+    return getAddrLargePIC(GN, DAG, OpFlags);
+  }
 
   // This also catches the large code model case for Darwin, and tiny code
   // model with got relocations.
@@ -11455,10 +11523,19 @@ AArch64TargetLowering::LowerELFGlobalTLSAddress(SDValue Op,
       Model = TLSModel::GeneralDynamic;
   }
 
-  if (getTargetMachine().getCodeModel() == CodeModel::Large &&
-      Model != TLSModel::LocalExec)
-    report_fatal_error("ELF TLS only supported in small memory model or "
-                       "in local exec TLS model");
+  // Local-exec needs no help: its TPREL sequence is already PC-independent and
+  // does not use ADRP. The large PIC code model additionally supports
+  // initial-exec, via the MOVZ/MOVK form of GOTTPREL indexed off the GOT base.
+  // The dynamic models still need TLSDESC, whose only sequence is ADRP-based.
+  bool ModelSupported =
+      Model == TLSModel::LocalExec ||
+      (Subtarget->isLargePIC() && Model == TLSModel::InitialExec);
+  if (getTargetMachine().getCodeModel() == CodeModel::Large && !ModelSupported)
+    DAG.getContext()->diagnose(DiagnosticInfoUnsupported(
+        DAG.getMachineFunction().getFunction(),
+        "the large code model only supports local-exec TLS, and initial-exec "
+        "when building position-independent code",
+        SDLoc(Op).getDebugLoc()));
   // Different choices can be made for the maximum size of the TLS area for a
   // module. For the small address model, the default TLS size is 16MiB and the
   // maximum TLS size is 4GiB.
@@ -11476,8 +11553,34 @@ AArch64TargetLowering::LowerELFGlobalTLSAddress(SDValue Op,
   if (Model == TLSModel::LocalExec) {
     return LowerELFTLSLocalExec(GV, ThreadBase, DL, DAG);
   } else if (Model == TLSModel::InitialExec) {
-    TPOff = DAG.getTargetGlobalAddress(GV, DL, PtrVT, 0, AArch64II::MO_TLS);
-    TPOff = DAG.getNode(AArch64ISD::LOADgot, DL, PtrVT, TPOff);
+    if (Subtarget->isLargePIC()) {
+      // ADRP cannot reach, so build the offset of the symbol's GOT entry from
+      // the GOT base with MOVZ/MOVK and index the GOT base by it:
+      //   movz x, #:gottprel_g1:var
+      //   movk x, #:gottprel_g0_nc:var
+      //   ldr  x, [<got base>, x]
+      // Two chunks are all the ABI defines here, which bounds the GOT at 4GB;
+      // the image as a whole is still unbounded.
+      SDValue HiVar = DAG.getTargetGlobalAddress(
+          GV, DL, PtrVT, 0, AArch64II::MO_TLS | AArch64II::MO_G1);
+      SDValue LoVar = DAG.getTargetGlobalAddress(
+          GV, DL, PtrVT, 0,
+          AArch64II::MO_TLS | AArch64II::MO_G0 | AArch64II::MO_NC);
+      SDValue Off =
+          SDValue(DAG.getMachineNode(AArch64::MOVZXi, DL, PtrVT, HiVar,
+                                     DAG.getTargetConstant(16, DL, MVT::i32)),
+                  0);
+      Off = SDValue(DAG.getMachineNode(AArch64::MOVKXi, DL, PtrVT, Off, LoVar,
+                                       DAG.getTargetConstant(0, DL, MVT::i32)),
+                    0);
+      SDValue Addr =
+          DAG.getNode(ISD::ADD, DL, PtrVT, getGOTBaseLargePIC(DL, DAG), Off);
+      TPOff = DAG.getLoad(PtrVT, DL, DAG.getEntryNode(), Addr,
+                          MachinePointerInfo::getGOT(DAG.getMachineFunction()));
+    } else {
+      TPOff = DAG.getTargetGlobalAddress(GV, DL, PtrVT, 0, AArch64II::MO_TLS);
+      TPOff = DAG.getNode(AArch64ISD::LOADgot, DL, PtrVT, TPOff);
+    }
   } else if (Model == TLSModel::LocalDynamic) {
     // Local-dynamic accesses proceed in two phases. A general-dynamic TLS
     // descriptor call against the special symbol _TLS_MODULE_BASE_ to calculate
@@ -13136,6 +13239,11 @@ SDValue AArch64TargetLowering::LowerJumpTable(SDValue Op,
   // is necessary here. Just get the address of the jump table.
   JumpTableSDNode *JT = cast<JumpTableSDNode>(Op);
 
+  // Only the address of the table needs a full-range sequence; the dispatch in
+  // LowerBR_JT indexes it from that register and is range-independent.
+  if (Subtarget->isLargePIC())
+    return getAddrLargePIC(JT, DAG);
+
   CodeModel::Model CM = getTargetMachine().getCodeModel();
   if (CM == CodeModel::Large && !getTargetMachine().isPositionIndependent() &&
       !Subtarget->isTargetMachO())
@@ -13218,6 +13326,10 @@ SDValue AArch64TargetLowering::LowerBRIND(SDValue Op, SelectionDAG &DAG) const {
 SDValue AArch64TargetLowering::LowerConstantPool(SDValue Op,
                                                  SelectionDAG &DAG) const {
   ConstantPoolSDNode *CP = cast<ConstantPoolSDNode>(Op);
+
+  if (Subtarget->isLargePIC())
+    return getAddrLargePIC(CP, DAG);
+
   CodeModel::Model CM = getTargetMachine().getCodeModel();
   if (CM == CodeModel::Large) {
     // Use the GOT for the large code model on iOS.
@@ -13256,6 +13368,9 @@ SDValue AArch64TargetLowering::LowerBlockAddress(SDValue Op,
     return DAG.getCopyFromReg(SDValue(MOV, 0), DL, AArch64::X16, MVT::i64,
                               SDValue(MOV, 1));
   }
+
+  if (Subtarget->isLargePIC())
+    return getAddrLargePIC(BAN, DAG);
 
   CodeModel::Model CM = getTargetMachine().getCodeModel();
   if (CM == CodeModel::Large && !Subtarget->isTargetMachO()) {

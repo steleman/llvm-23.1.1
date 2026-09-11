@@ -97,6 +97,13 @@ StringRef AArch64::getSpecifierName(AArch64::Specifier S) {
   case AArch64::S_GOT_PAGE:            return ":got:";
   case AArch64::S_GOT_PAGE_LO15:       return ":gotpage_lo15:";
   case AArch64::S_GOT_LO12:            return ":got_lo12:";
+  case AArch64::S_GOTOFF_G0:           return ":gotoff_g0:";
+  case AArch64::S_GOTOFF_G0_NC:        return ":gotoff_g0_nc:";
+  case AArch64::S_GOTOFF_G1:           return ":gotoff_g1:";
+  case AArch64::S_GOTOFF_G1_NC:        return ":gotoff_g1_nc:";
+  case AArch64::S_GOTOFF_G2:           return ":gotoff_g2:";
+  case AArch64::S_GOTOFF_G2_NC:        return ":gotoff_g2_nc:";
+  case AArch64::S_GOTOFF_G3:           return ":gotoff_g3:";
   case AArch64::S_GOTTPREL:            return ":gottprel:";
   case AArch64::S_GOTTPREL_PAGE:       return ":gottprel:";
   case AArch64::S_GOTTPREL_LO12_NC:    return ":gottprel_lo12:";

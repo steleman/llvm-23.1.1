@@ -346,6 +346,14 @@ public:
     }
   }
 
+  /// True for the ELF large code model built as position-independent code.
+  /// Neither ADRP+ADD nor absolute MOVZ/MOVK sequences are usable there, so
+  /// addresses need the full-range PC-relative sequences instead.
+  bool isLargePIC() const {
+    return TLInfo.getTargetMachine().getCodeModel() == CodeModel::Large &&
+           TLInfo.getTargetMachine().isPositionIndependent() && isTargetELF();
+  }
+
   /// Returns whether the operating system makes it safer to store sensitive
   /// values in x16 and x17 as opposed to other registers.
   bool isX16X17Safer() const;

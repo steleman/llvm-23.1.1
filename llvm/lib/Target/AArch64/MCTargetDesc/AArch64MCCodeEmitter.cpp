@@ -709,6 +709,10 @@ unsigned AArch64MCCodeEmitter::fixMOVZ(const MCInst &MI, unsigned EncodedValue,
     case AArch64::S_DTPREL_G1:
     case AArch64::S_DTPREL_G0:
     case AArch64::S_GOTTPREL_G1:
+    case AArch64::S_GOTOFF_G0:
+    case AArch64::S_GOTOFF_G1:
+    case AArch64::S_GOTOFF_G2:
+    case AArch64::S_GOTOFF_G3:
     case AArch64::S_TPREL_G2:
     case AArch64::S_TPREL_G1:
     case AArch64::S_TPREL_G0:

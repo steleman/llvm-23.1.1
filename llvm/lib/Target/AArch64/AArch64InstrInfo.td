@@ -560,6 +560,9 @@ def SDT_AArch64WrapperLarge : SDTypeProfile<1, 4,
                                          SDTCisSameAs<1, 2>, SDTCisSameAs<1, 3>,
                                          SDTCisSameAs<1, 4>]>;
 
+def SDT_AArch64AddrPRELLarge : SDTypeProfile<1, 1, [SDTCisVT<0, i64>,
+                                                    SDTCisVT<1, i64>]>;
+
 def SDT_AArch64TBL : SDTypeProfile<1, 2, [
   SDTCisVec<0>, SDTCisSameAs<0, 1>, SDTCisInt<2>
 ]>;
@@ -1074,6 +1077,11 @@ def AArch64tlsdesc_auth_callseq : SDNode<"AArch64ISD::TLSDESC_AUTH_CALLSEQ",
 def AArch64WrapperLarge : SDNode<"AArch64ISD::WrapperLarge",
                                  SDT_AArch64WrapperLarge>;
 
+// PC-relative address of a symbol with a full 64-bit range, for the large
+// position-independent code model.
+def AArch64AddrPRELLarge : SDNode<"AArch64ISD::AddrPRELLarge",
+                                  SDT_AArch64AddrPRELLarge>;
+
 /// Natural vector cast. ISD::BITCAST is not natural in the big-endian
 /// world w.r.t vectors; which causes additional REV instructions to be
 /// generated to compensate for the byte-swapping. But sometimes we do
@@ -1423,6 +1431,28 @@ def LOADgot : Pseudo<(outs GPR64common:$dst), (ins i64imm:$addr),
                      [(set GPR64common:$dst, (AArch64LOADgot tglobaladdr:$addr))]>,
               Sched<[WriteLDAdr]>;
 
+// Materialize the PC-relative address of a symbol with a full 64-bit range,
+// for the large position-independent code model:
+//
+//   .Lpc:
+//     adr  $dst, .Lpc
+//     movz x17, #:prel_g3:sym+4
+//     movk x17, #:prel_g2_nc:sym+8
+//     movk x17, #:prel_g1_nc:sym+12
+//     movk x17, #:prel_g0_nc:sym+16
+//     add  $dst, $dst, x17
+//
+// Each MOVW_PREL chunk is resolved against the address of its own instruction,
+// so the addends compensate for the distance from the ADR, making all four
+// chunks slices of the same value sym - .Lpc. x17 is the scratch register,
+// hence the GPR64noip destination.
+let Defs = [X17], Size = 24 in
+def MOVaddrPREL : Pseudo<(outs GPR64noip:$dst), (ins i64imm:$sym),
+                         [(set GPR64noip:$dst,
+                               (AArch64AddrPRELLarge tglobaladdr:$sym))]>,
+                  Sched<[WriteAdrAdr]>;
+
+
 // The MOVaddr instruction should match only when the add is not folded
 // into a load or store address.
 def MOVaddr
@@ -1466,6 +1496,14 @@ def ADDlowTLS
       Sched<[WriteAdr]>;
 
 } // isReMaterializable, isCodeGenOnly
+def : Pat<(AArch64AddrPRELLarge texternalsym:$sym),
+          (MOVaddrPREL texternalsym:$sym)>;
+def : Pat<(AArch64AddrPRELLarge tblockaddress:$sym),
+          (MOVaddrPREL tblockaddress:$sym)>;
+def : Pat<(AArch64AddrPRELLarge tconstpool:$sym),
+          (MOVaddrPREL tconstpool:$sym)>;
+def : Pat<(AArch64AddrPRELLarge tjumptable:$sym),
+          (MOVaddrPREL tjumptable:$sym)>;
 
 def : Pat<(AArch64LOADgot tglobaltlsaddr:$addr),
           (LOADgot tglobaltlsaddr:$addr)>;

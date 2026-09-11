@@ -3234,10 +3234,21 @@ void tools::addMCModel(const Driver &D, const llvm::opt::ArgList &Args,
       CM = "large";
     if (Triple.isAArch64(64)) {
       Ok = CM == "tiny" || CM == "small" || CM == "large";
+      // The large code model is implemented for position-independent code on
+      // ELF and MachO only; COFF still has no full-range sequences.
       if (CM == "large" && !Triple.isOSBinFormatMachO() &&
-          RelocationModel != llvm::Reloc::Static)
+          !Triple.isOSBinFormatELF() && RelocationModel != llvm::Reloc::Static)
         D.Diag(diag::err_drv_argument_only_allowed_with)
             << A->getAsString(Args) << "-fno-pic";
+      // Authenticating GOT loads would need R_AARCH64_AUTH_MOVW_GOTOFF_G*,
+      // which is not implemented, so the two cannot be combined. Diagnose here
+      // rather than leaving it to the backend.
+      if (CM == "large" && Triple.isOSBinFormatELF() &&
+          RelocationModel != llvm::Reloc::Static &&
+          Args.hasFlag(options::OPT_fptrauth_elf_got,
+                       options::OPT_fno_ptrauth_elf_got, false))
+        D.Diag(diag::err_drv_argument_not_allowed_with)
+            << A->getAsString(Args) << "-fptrauth-elf-got";
     } else if (Triple.isLoongArch()) {
       if (CM == "extreme" &&
           Args.hasFlagNoClaim(options::OPT_fplt, options::OPT_fno_plt, false))

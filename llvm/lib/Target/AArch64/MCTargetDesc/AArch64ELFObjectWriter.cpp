@@ -73,6 +73,13 @@ bool AArch64ELFObjectWriter::isNonILP32reloc(const MCFixup &Fixup,
   case AArch64::S_TPREL_G1_NC:
   case AArch64::S_GOTTPREL_G1:
   case AArch64::S_GOTTPREL_G0_NC:
+  case AArch64::S_GOTOFF_G0:
+  case AArch64::S_GOTOFF_G0_NC:
+  case AArch64::S_GOTOFF_G1:
+  case AArch64::S_GOTOFF_G1_NC:
+  case AArch64::S_GOTOFF_G2:
+  case AArch64::S_GOTOFF_G2_NC:
+  case AArch64::S_GOTOFF_G3:
     reportError(Fixup.getLoc(),
                 "absolute MOV relocation is not supported in ILP32");
     return true;
@@ -493,6 +500,20 @@ unsigned AArch64ELFObjectWriter::getRelocType(const MCFixup &Fixup,
         return ELF::R_AARCH64_TLSIE_MOVW_GOTTPREL_G1;
       if (RefKind == AArch64::S_GOTTPREL_G0_NC)
         return ELF::R_AARCH64_TLSIE_MOVW_GOTTPREL_G0_NC;
+      if (RefKind == AArch64::S_GOTOFF_G0)
+        return ELF::R_AARCH64_MOVW_GOTOFF_G0;
+      if (RefKind == AArch64::S_GOTOFF_G0_NC)
+        return ELF::R_AARCH64_MOVW_GOTOFF_G0_NC;
+      if (RefKind == AArch64::S_GOTOFF_G1)
+        return ELF::R_AARCH64_MOVW_GOTOFF_G1;
+      if (RefKind == AArch64::S_GOTOFF_G1_NC)
+        return ELF::R_AARCH64_MOVW_GOTOFF_G1_NC;
+      if (RefKind == AArch64::S_GOTOFF_G2)
+        return ELF::R_AARCH64_MOVW_GOTOFF_G2;
+      if (RefKind == AArch64::S_GOTOFF_G2_NC)
+        return ELF::R_AARCH64_MOVW_GOTOFF_G2_NC;
+      if (RefKind == AArch64::S_GOTOFF_G3)
+        return ELF::R_AARCH64_MOVW_GOTOFF_G3;
       reportError(Fixup.getLoc(), "invalid fixup for movz/movk instruction");
       return ELF::R_AARCH64_NONE;
     default:

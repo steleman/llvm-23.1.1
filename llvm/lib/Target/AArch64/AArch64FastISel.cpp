@@ -3249,6 +3249,17 @@ bool AArch64FastISel::fastLowerCall(CallLoweringInfo &CLI) {
   } else {
     Register CallReg;
     if (Symbol) {
+      // ADRP cannot reach in the large PIC code model, and FastISel does not
+      // implement the full-range sequence, so fall back to SelectionDAG. The
+      // GlobalValue path below bails the same way, via materializeGV.
+      //
+      // This is defensive: the only callers that set a symbol callee are the
+      // mem* intrinsics below, and none of them were observed to reach here on
+      // ELF at -O0. Guarding anyway, because if it ever is reached the ADRP
+      // emitted below would silently reintroduce the +/-4GB range limit.
+      if (Subtarget->isLargePIC())
+        return false;
+
       Register ADRPReg = createResultReg(&AArch64::GPR64commonRegClass);
       BuildMI(*FuncInfo.MBB, FuncInfo.InsertPt, MIMD, TII.get(AArch64::ADRP),
               ADRPReg)

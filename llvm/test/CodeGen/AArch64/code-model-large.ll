@@ -22,8 +22,13 @@ define dso_local ptr @global_addr() {
 ; PIC-NEXT:    .type .Lglobal_addr$local,@function
 ; PIC-NEXT:    .cfi_startproc
 ; PIC-NEXT:  // %bb.0:
-; PIC-NEXT:    adrp x0, .Lvar8$local
-; PIC-NEXT:    add x0, x0, :lo12:.Lvar8$local
+; PIC-NEXT:  .Ltmp0:
+; PIC-NEXT:    adr x0, .Ltmp0
+; PIC-NEXT:    movz x17, #:prel_g3:.Lvar8$local+4
+; PIC-NEXT:    movk x17, #:prel_g2_nc:.Lvar8$local+8
+; PIC-NEXT:    movk x17, #:prel_g1_nc:.Lvar8$local+12
+; PIC-NEXT:    movk x17, #:prel_g0_nc:.Lvar8$local+16
+; PIC-NEXT:    add x0, x0, x17
 ; PIC-NEXT:    ret
   ret ptr @var8
   ; The movz/movk calculation should end up returned directly in x0.
@@ -45,8 +50,14 @@ define dso_local i8 @global_i8() {
 ; PIC-NEXT:    .type .Lglobal_i8$local,@function
 ; PIC-NEXT:    .cfi_startproc
 ; PIC-NEXT:  // %bb.0:
-; PIC-NEXT:    adrp x8, .Lvar8$local
-; PIC-NEXT:    ldrb w0, [x8, :lo12:.Lvar8$local]
+; PIC-NEXT:  .Ltmp1:
+; PIC-NEXT:    adr x8, .Ltmp1
+; PIC-NEXT:    movz x17, #:prel_g3:.Lvar8$local+4
+; PIC-NEXT:    movk x17, #:prel_g2_nc:.Lvar8$local+8
+; PIC-NEXT:    movk x17, #:prel_g1_nc:.Lvar8$local+12
+; PIC-NEXT:    movk x17, #:prel_g0_nc:.Lvar8$local+16
+; PIC-NEXT:    add x8, x8, x17
+; PIC-NEXT:    ldrb w0, [x8]
 ; PIC-NEXT:    ret
   %val = load i8, ptr @var8
   ret i8 %val
@@ -68,8 +79,14 @@ define dso_local i16 @global_i16() {
 ; PIC-NEXT:    .type .Lglobal_i16$local,@function
 ; PIC-NEXT:    .cfi_startproc
 ; PIC-NEXT:  // %bb.0:
-; PIC-NEXT:    adrp x8, .Lvar16$local
-; PIC-NEXT:    ldrh w0, [x8, :lo12:.Lvar16$local]
+; PIC-NEXT:  .Ltmp2:
+; PIC-NEXT:    adr x8, .Ltmp2
+; PIC-NEXT:    movz x17, #:prel_g3:.Lvar16$local+4
+; PIC-NEXT:    movk x17, #:prel_g2_nc:.Lvar16$local+8
+; PIC-NEXT:    movk x17, #:prel_g1_nc:.Lvar16$local+12
+; PIC-NEXT:    movk x17, #:prel_g0_nc:.Lvar16$local+16
+; PIC-NEXT:    add x8, x8, x17
+; PIC-NEXT:    ldrh w0, [x8]
 ; PIC-NEXT:    ret
   %val = load i16, ptr @var16
   ret i16 %val
@@ -91,8 +108,14 @@ define dso_local i32 @global_i32() {
 ; PIC-NEXT:    .type .Lglobal_i32$local,@function
 ; PIC-NEXT:    .cfi_startproc
 ; PIC-NEXT:  // %bb.0:
-; PIC-NEXT:    adrp x8, .Lvar32$local
-; PIC-NEXT:    ldr w0, [x8, :lo12:.Lvar32$local]
+; PIC-NEXT:  .Ltmp3:
+; PIC-NEXT:    adr x8, .Ltmp3
+; PIC-NEXT:    movz x17, #:prel_g3:.Lvar32$local+4
+; PIC-NEXT:    movk x17, #:prel_g2_nc:.Lvar32$local+8
+; PIC-NEXT:    movk x17, #:prel_g1_nc:.Lvar32$local+12
+; PIC-NEXT:    movk x17, #:prel_g0_nc:.Lvar32$local+16
+; PIC-NEXT:    add x8, x8, x17
+; PIC-NEXT:    ldr w0, [x8]
 ; PIC-NEXT:    ret
   %val = load i32, ptr @var32
   ret i32 %val
@@ -114,8 +137,14 @@ define dso_local i64 @global_i64() {
 ; PIC-NEXT:    .type .Lglobal_i64$local,@function
 ; PIC-NEXT:    .cfi_startproc
 ; PIC-NEXT:  // %bb.0:
-; PIC-NEXT:    adrp x8, .Lvar64$local
-; PIC-NEXT:    ldr x0, [x8, :lo12:.Lvar64$local]
+; PIC-NEXT:  .Ltmp4:
+; PIC-NEXT:    adr x8, .Ltmp4
+; PIC-NEXT:    movz x17, #:prel_g3:.Lvar64$local+4
+; PIC-NEXT:    movk x17, #:prel_g2_nc:.Lvar64$local+8
+; PIC-NEXT:    movk x17, #:prel_g1_nc:.Lvar64$local+12
+; PIC-NEXT:    movk x17, #:prel_g0_nc:.Lvar64$local+16
+; PIC-NEXT:    add x8, x8, x17
+; PIC-NEXT:    ldr x0, [x8]
 ; PIC-NEXT:    ret
   %val = load i64, ptr @var64
   ret i64 %val
@@ -137,8 +166,14 @@ define dso_local <2 x i64> @constpool() {
 ; PIC-NEXT:    .type .Lconstpool$local,@function
 ; PIC-NEXT:    .cfi_startproc
 ; PIC-NEXT:  // %bb.0:
-; PIC-NEXT:    adrp x8, .LCPI5_0
-; PIC-NEXT:    ldr q0, [x8, :lo12:.LCPI5_0]
+; PIC-NEXT:  .Ltmp5:
+; PIC-NEXT:    adr x8, .Ltmp5
+; PIC-NEXT:    movz x17, #:prel_g3:.LCPI5_0+4
+; PIC-NEXT:    movk x17, #:prel_g2_nc:.LCPI5_0+8
+; PIC-NEXT:    movk x17, #:prel_g1_nc:.LCPI5_0+12
+; PIC-NEXT:    movk x17, #:prel_g0_nc:.LCPI5_0+16
+; PIC-NEXT:    add x8, x8, x17
+; PIC-NEXT:    ldr q0, [x8]
 ; PIC-NEXT:    ret
   ret <2 x i64> <i64 123456789, i64 987654321100>
 }

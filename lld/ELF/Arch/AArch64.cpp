@@ -300,6 +300,19 @@ void AArch64::scanSectionImpl(InputSectionBase &sec, Relocs<RelTy> rels,
     case R_AARCH64_GOT_LD_PREL19:
       expr = R_GOT_PC;
       break;
+    // The offset of the symbol's GOT entry from the GOT base, split into
+    // 16-bit chunks for a MOVZ/MOVK sequence. AAELF64 calculates these as
+    // G(GDAT(S)) - GOT, and _GLOBAL_OFFSET_TABLE_ is the start of .got here,
+    // so R_GOT_OFF is exactly that quantity.
+    case R_AARCH64_MOVW_GOTOFF_G0:
+    case R_AARCH64_MOVW_GOTOFF_G0_NC:
+    case R_AARCH64_MOVW_GOTOFF_G1:
+    case R_AARCH64_MOVW_GOTOFF_G1_NC:
+    case R_AARCH64_MOVW_GOTOFF_G2:
+    case R_AARCH64_MOVW_GOTOFF_G2_NC:
+    case R_AARCH64_MOVW_GOTOFF_G3:
+      expr = R_GOT_OFF;
+      break;
 
     // AUTH GOT relocations. Set NEEDS_GOT_AUTH to detect incompatibility with
     // NEEDS_GOT_NONAUTH. rs.process does not set the flag.
@@ -342,6 +355,19 @@ void AArch64::scanSectionImpl(InputSectionBase &sec, Relocs<RelTy> rels,
       continue;
     case R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC:
       rs.handleTlsIe(R_GOT, type, offset, addend, sym);
+      continue;
+    // The MOVZ/MOVK form of initial-exec, used by the large code model: the
+    // offset of the symbol's GOT entry from the GOT base, in 16-bit chunks.
+    //
+    // IE-to-LE optimization is disabled here. It works by writing the
+    // thread-pointer-relative value into the same field the GOT offset would
+    // have occupied, which is only valid when the load that consumes it is
+    // itself relocated and can be rewritten. This sequence indexes the GOT
+    // base with a plain register-offset LDR that carries no relocation, so
+    // relaxing would leave that LDR dereferencing a thread-pointer offset.
+    case R_AARCH64_TLSIE_MOVW_GOTTPREL_G1:
+    case R_AARCH64_TLSIE_MOVW_GOTTPREL_G0_NC:
+      rs.handleTlsIe<false>(R_GOT_OFF, type, offset, addend, sym);
       continue;
 
     // TLSDESC relocations:
@@ -443,6 +469,15 @@ int64_t AArch64::getImplicitAddend(const uint8_t *buf, RelType type) const {
   case R_AARCH64_MOVW_UABS_G2:
   case R_AARCH64_MOVW_UABS_G2_NC:
   case R_AARCH64_MOVW_UABS_G3:
+  case R_AARCH64_MOVW_GOTOFF_G0:
+  case R_AARCH64_MOVW_GOTOFF_G0_NC:
+  case R_AARCH64_MOVW_GOTOFF_G1:
+  case R_AARCH64_MOVW_GOTOFF_G1_NC:
+  case R_AARCH64_MOVW_GOTOFF_G2:
+  case R_AARCH64_MOVW_GOTOFF_G2_NC:
+  case R_AARCH64_MOVW_GOTOFF_G3:
+  case R_AARCH64_TLSIE_MOVW_GOTTPREL_G1:
+  case R_AARCH64_TLSIE_MOVW_GOTTPREL_G0_NC:
     return SignExtend64<16>(getBits(read32le(buf), 5, 20));
 
     // R_AARCH64_TSTBR14 points at a TBZ or TBNZ instruction, which
@@ -763,31 +798,40 @@ void AArch64::relocate(uint8_t *loc, const Relocation &rel,
     break;
   case R_AARCH64_MOVW_PREL_G0:
   case R_AARCH64_MOVW_SABS_G0:
+  case R_AARCH64_MOVW_GOTOFF_G0:
   case R_AARCH64_TLSLE_MOVW_TPREL_G0:
     checkInt(ctx, loc, val, 17, rel);
     [[fallthrough]];
   case R_AARCH64_MOVW_PREL_G0_NC:
+  case R_AARCH64_MOVW_GOTOFF_G0_NC:
+  case R_AARCH64_TLSIE_MOVW_GOTTPREL_G0_NC:
   case R_AARCH64_TLSLE_MOVW_TPREL_G0_NC:
     writeSMovWImm(loc, val);
     break;
   case R_AARCH64_MOVW_PREL_G1:
   case R_AARCH64_MOVW_SABS_G1:
+  case R_AARCH64_MOVW_GOTOFF_G1:
+  case R_AARCH64_TLSIE_MOVW_GOTTPREL_G1:
   case R_AARCH64_TLSLE_MOVW_TPREL_G1:
     checkInt(ctx, loc, val, 33, rel);
     [[fallthrough]];
   case R_AARCH64_MOVW_PREL_G1_NC:
+  case R_AARCH64_MOVW_GOTOFF_G1_NC:
   case R_AARCH64_TLSLE_MOVW_TPREL_G1_NC:
     writeSMovWImm(loc, val >> 16);
     break;
   case R_AARCH64_MOVW_PREL_G2:
   case R_AARCH64_MOVW_SABS_G2:
+  case R_AARCH64_MOVW_GOTOFF_G2:
   case R_AARCH64_TLSLE_MOVW_TPREL_G2:
     checkInt(ctx, loc, val, 49, rel);
     [[fallthrough]];
   case R_AARCH64_MOVW_PREL_G2_NC:
+  case R_AARCH64_MOVW_GOTOFF_G2_NC:
     writeSMovWImm(loc, val >> 32);
     break;
   case R_AARCH64_MOVW_PREL_G3:
+  case R_AARCH64_MOVW_GOTOFF_G3:
     writeSMovWImm(loc, val >> 48);
     break;
   case R_AARCH64_TSTBR14:

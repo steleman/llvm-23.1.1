@@ -1,7 +1,7 @@
 ; RUN: llc -no-integrated-as -verify-machineinstrs -o - %s -aarch64-min-jump-table-entries=4 -mtriple=aarch64-none-linux-gnu -aarch64-enable-atomic-cfg-tidy=0 | FileCheck %s
 ; RUN: llc -no-integrated-as -code-model=large -verify-machineinstrs -o - %s -aarch64-min-jump-table-entries=4 -mtriple=aarch64-none-linux-gnu -aarch64-enable-atomic-cfg-tidy=0 | FileCheck --check-prefix=CHECK-LARGE %s
-; RUN: llc -no-integrated-as -code-model=large -relocation-model=pic -o - %s -aarch64-min-jump-table-entries=4 -mtriple=aarch64-none-linux-gnu -aarch64-enable-atomic-cfg-tidy=0 | FileCheck --check-prefix=CHECK-PIC %s
-; RUN: llc -no-integrated-as -mtriple=aarch64-none-linux-gnu -verify-machineinstrs -relocation-model=pic -aarch64-min-jump-table-entries=4 -aarch64-enable-atomic-cfg-tidy=0 -o - %s | FileCheck --check-prefix=CHECK-PIC %s
+; RUN: llc -no-integrated-as -code-model=large -relocation-model=pic -o - %s -aarch64-min-jump-table-entries=4 -mtriple=aarch64-none-linux-gnu -aarch64-enable-atomic-cfg-tidy=0 | FileCheck --check-prefixes=CHECK-LARGE-PIC,CHECK-JTDATA %s
+; RUN: llc -no-integrated-as -mtriple=aarch64-none-linux-gnu -verify-machineinstrs -relocation-model=pic -aarch64-min-jump-table-entries=4 -aarch64-enable-atomic-cfg-tidy=0 -o - %s | FileCheck --check-prefixes=CHECK-PIC,CHECK-JTDATA %s
 ; RUN: llc -no-integrated-as -verify-machineinstrs -o - %s -mtriple=arm64-apple-ios -aarch64-min-jump-table-entries=4 -aarch64-enable-atomic-cfg-tidy=0 | FileCheck --check-prefix=CHECK-IOS %s
 ; RUN: llc -no-integrated-as -code-model=tiny -verify-machineinstrs -o - %s -aarch64-min-jump-table-entries=4 -mtriple=aarch64-none-linux-gnu -aarch64-enable-atomic-cfg-tidy=0 | FileCheck --check-prefix=CHECK-TINY %s
 
@@ -38,6 +38,19 @@ define i32 @test_jumptable(i32 %in) {
 ; CHECK-PIC:     ldrb w[[OFFSET:[0-9]+]], [x[[JT]], {{x[0-9]+}}]
 ; CHECK-PIC:     add [[DEST:x[0-9]+]], [[PCBASE]], x[[OFFSET]], lsl #2
 ; CHECK-PIC:     br [[DEST]]
+
+; CHECK-LARGE-PIC-LABEL: test_jumptable:
+; CHECK-LARGE-PIC:     adr [[PCREG:x[0-9]+]], {{.Ltmp[0-9]+}}
+; CHECK-LARGE-PIC:     movz x17, #:prel_g3:.LJTI0_0+4
+; CHECK-LARGE-PIC:     movk x17, #:prel_g2_nc:.LJTI0_0+8
+; CHECK-LARGE-PIC:     movk x17, #:prel_g1_nc:.LJTI0_0+12
+; CHECK-LARGE-PIC:     movk x17, #:prel_g0_nc:.LJTI0_0+16
+; CHECK-LARGE-PIC:     add x[[JT:[0-9]+]], [[PCREG]], x17
+; The dispatch itself is function-local, so it is the same as any other model.
+; CHECK-LARGE-PIC:     adr [[PCBASE:x[0-9]+]], [[JTBASE:.LBB[0-9]+_[0-9]+]]
+; CHECK-LARGE-PIC:     ldrb w[[OFFSET:[0-9]+]], [x[[JT]], {{x[0-9]+}}]
+; CHECK-LARGE-PIC:     add [[DEST:x[0-9]+]], [[PCBASE]], x[[OFFSET]], lsl #2
+; CHECK-LARGE-PIC:     br [[DEST]]
 
 ; CHECK-IOS:     adrp [[JTPAGE:x[0-9]+]], LJTI0_0@PAGE
 ; CHECK-IOS:     add x[[JT:[0-9]+]], [[JTPAGE]], LJTI0_0@PAGEOFF
@@ -123,15 +136,15 @@ lbl4:
 ; CHECK-NEXT: .hword (.LBB{{.*}}-[[JTBASE]])>>2
 ; CHECK-NEXT: .hword (.LBB{{.*}}-[[JTBASE]])>>2
 
-; CHECK-PIC-NOT: .data_region
-; CHECK-PIC-NOT: .LJTI0_0
-; CHECK-PIC: .LJTI0_0:
-; CHECK-PIC-NEXT: .byte ([[JTBASE]]-[[JTBASE]])>>2
-; CHECK-PIC-NEXT: .byte (.LBB{{.*}}-[[JTBASE]])>>2
-; CHECK-PIC-NEXT: .byte (.LBB{{.*}}-[[JTBASE]])>>2
-; CHECK-PIC-NEXT: .byte (.LBB{{.*}}-[[JTBASE]])>>2
-; CHECK-PIC-NEXT: .byte (.LBB{{.*}}-[[JTBASE]])>>2
-; CHECK-PIC-NOT: .end_data_region
+; CHECK-JTDATA-NOT: .data_region
+; CHECK-JTDATA-NOT: .LJTI0_0
+; CHECK-JTDATA: .LJTI0_0:
+; CHECK-JTDATA-NEXT: .byte ([[JTBASE]]-[[JTBASE]])>>2
+; CHECK-JTDATA-NEXT: .byte (.LBB{{.*}}-[[JTBASE]])>>2
+; CHECK-JTDATA-NEXT: .byte (.LBB{{.*}}-[[JTBASE]])>>2
+; CHECK-JTDATA-NEXT: .byte (.LBB{{.*}}-[[JTBASE]])>>2
+; CHECK-JTDATA-NEXT: .byte (.LBB{{.*}}-[[JTBASE]])>>2
+; CHECK-JTDATA-NOT: .end_data_region
 
 ; CHECK-IOS: .section __TEXT,__const
 ; CHECK-IOS-NOT: .data_region

@@ -1104,14 +1104,15 @@ public:
   }
 
   bool isMovWSymbolG3() const {
-    return isMovWSymbol({AArch64::S_ABS_G3, AArch64::S_PREL_G3});
+    return isMovWSymbol(
+        {AArch64::S_ABS_G3, AArch64::S_PREL_G3, AArch64::S_GOTOFF_G3});
   }
 
   bool isMovWSymbolG2() const {
-    return isMovWSymbol({AArch64::S_ABS_G2, AArch64::S_ABS_G2_S,
-                         AArch64::S_ABS_G2_NC, AArch64::S_PREL_G2,
-                         AArch64::S_PREL_G2_NC, AArch64::S_TPREL_G2,
-                         AArch64::S_DTPREL_G2});
+    return isMovWSymbol(
+        {AArch64::S_ABS_G2, AArch64::S_ABS_G2_S, AArch64::S_ABS_G2_NC,
+         AArch64::S_PREL_G2, AArch64::S_PREL_G2_NC, AArch64::S_TPREL_G2,
+         AArch64::S_DTPREL_G2, AArch64::S_GOTOFF_G2, AArch64::S_GOTOFF_G2_NC});
   }
 
   bool isMovWSymbolG1() const {
@@ -1119,7 +1120,8 @@ public:
                          AArch64::S_ABS_G1_NC, AArch64::S_PREL_G1,
                          AArch64::S_PREL_G1_NC, AArch64::S_GOTTPREL_G1,
                          AArch64::S_TPREL_G1, AArch64::S_TPREL_G1_NC,
-                         AArch64::S_DTPREL_G1, AArch64::S_DTPREL_G1_NC});
+                         AArch64::S_DTPREL_G1, AArch64::S_DTPREL_G1_NC,
+                         AArch64::S_GOTOFF_G1, AArch64::S_GOTOFF_G1_NC});
   }
 
   bool isMovWSymbolG0() const {
@@ -1127,7 +1129,8 @@ public:
                          AArch64::S_ABS_G0_NC, AArch64::S_PREL_G0,
                          AArch64::S_PREL_G0_NC, AArch64::S_GOTTPREL_G0_NC,
                          AArch64::S_TPREL_G0, AArch64::S_TPREL_G0_NC,
-                         AArch64::S_DTPREL_G0, AArch64::S_DTPREL_G0_NC});
+                         AArch64::S_DTPREL_G0, AArch64::S_DTPREL_G0_NC,
+                         AArch64::S_GOTOFF_G0, AArch64::S_GOTOFF_G0_NC});
   }
 
   template<int RegWidth, int Shift>
@@ -4449,6 +4452,13 @@ bool AArch64AsmParser::parseSymbolicImmVal(const MCExpr *&ImmVal) {
                   .Case("got", AArch64::S_GOT_PAGE)
                   .Case("gotpage_lo15", AArch64::S_GOT_PAGE_LO15)
                   .Case("got_lo12", AArch64::S_GOT_LO12)
+                  .Case("gotoff_g0", AArch64::S_GOTOFF_G0)
+                  .Case("gotoff_g0_nc", AArch64::S_GOTOFF_G0_NC)
+                  .Case("gotoff_g1", AArch64::S_GOTOFF_G1)
+                  .Case("gotoff_g1_nc", AArch64::S_GOTOFF_G1_NC)
+                  .Case("gotoff_g2", AArch64::S_GOTOFF_G2)
+                  .Case("gotoff_g2_nc", AArch64::S_GOTOFF_G2_NC)
+                  .Case("gotoff_g3", AArch64::S_GOTOFF_G3)
                   .Case("got_auth", AArch64::S_GOT_AUTH_PAGE)
                   .Case("got_auth_lo12", AArch64::S_GOT_AUTH_LO12)
                   .Case("gottprel", AArch64::S_GOTTPREL_PAGE)

@@ -12,7 +12,12 @@
 // RUN: not %clang -### -c -mcmodel=lager %s 2>&1 | FileCheck --check-prefix=INVALID %s
 // RUN: %clang --target=aarch64 -### -S -mcmodel=large -fno-pic %s 2>&1 | FileCheck --check-prefix=LARGE %s
 // RUN: %clang --target=aarch64-apple-macosx -### -S -mcmodel=large %s 2>&1 | FileCheck --check-prefix=LARGE %s
-// RUN: not %clang --target=aarch64 -### -S -mcmodel=large -fpic %s 2>&1 | FileCheck --check-prefix=AARCH64-PIC-LARGE %s
+// RUN: %clang --target=aarch64 -### -S -mcmodel=large -fpic %s 2>&1 | FileCheck --check-prefix=LARGE %s
+// RUN: %clang --target=aarch64 -### -S -mcmodel=large -fPIC %s 2>&1 | FileCheck --check-prefix=LARGE %s
+// RUN: not %clang --target=aarch64-linux-pauthtest -### -S -mcmodel=large -fpic -fptrauth-elf-got %s 2>&1 | FileCheck --check-prefix=AARCH64-LARGE-PTRAUTH-GOT %s
+// RUN: %clang --target=aarch64-linux-pauthtest -### -S -mcmodel=large -fno-pic -fptrauth-elf-got %s 2>&1 | FileCheck --check-prefix=LARGE %s
+// RUN: %clang --target=aarch64-linux-pauthtest -### -S -mcmodel=large -fpic %s 2>&1 | FileCheck --check-prefix=LARGE %s
+// RUN: not %clang --target=aarch64-w64-mingw32 -### -S -mcmodel=large -fpic %s 2>&1 | FileCheck --check-prefix=AARCH64-COFF-PIC-LARGE %s
 // RUN: not %clang -### -c --target=aarch64 -mcmodel=medium %s 2>&1 | FileCheck --check-prefix=ERR-MEDIUM %s
 // RUN: not %clang -### -c --target=aarch64 -mcmodel=kernel %s 2>&1 | FileCheck --check-prefix=ERR-KERNEL %s
 // RUN: not %clang --target=aarch64_32-linux -### -S -mcmodel=small %s 2>&1 | FileCheck --check-prefix=ERR-AARCH64_32 %s
@@ -40,7 +45,8 @@
 // ERR-KERNEL: error: unsupported argument 'kernel' to option '-mcmodel=' for target '{{.*}}'
 // ERR-LARGE:  error: unsupported argument 'large' to option '-mcmodel=' for target '{{.*}}'
 
-// AARCH64-PIC-LARGE: error: invalid argument '-mcmodel=large' only allowed with '-fno-pic'
+// AARCH64-LARGE-PTRAUTH-GOT: error: invalid argument '-mcmodel=large' not allowed with '-fptrauth-elf-got'
+// AARCH64-COFF-PIC-LARGE: error: invalid argument '-mcmodel=large' only allowed with '-fno-pic'
 // ERR-AARCH64_32: error: unsupported argument 'small' to option '-mcmodel=' for target 'aarch64_32-unknown-linux'
 
 // ERR-LOONGARCH64-PLT-EXTREME: error: invalid argument '-mcmodel=extreme' not allowed with '-fplt'

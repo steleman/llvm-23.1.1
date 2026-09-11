@@ -264,6 +264,7 @@ public:
   // and authenticate it with, if FPAC bit is not set, check+trap sequence after
   // authenticating)
   void LowerLOADgotAUTH(const MachineInstr &MI);
+  void LowerMOVaddrPREL(const MachineInstr &MI);
 
   void emitAddImm(MCRegister Val, int64_t Addend, MCRegister Tmp);
   void emitAddress(MCRegister Reg, const MCExpr *Expr, MCRegister Tmp,
@@ -3008,6 +3009,83 @@ void AArch64AsmPrinter::LowerMOVaddrPAC(const MachineInstr &MI) {
   emitPAC(Key, AArch64::X16, DiscReg);
 }
 
+// Compute the PC-relative address of a symbol with an unlimited range, for the
+// large position-independent code model.
+//
+// R_AARCH64_MOVW_PREL_G* are resolved as S + A - P against the address P of
+// the instruction each one relocates. The four chunks sit at different
+// addresses, so each carries an addend equal to its own distance from the ADR;
+// every chunk is then a slice of the same value, sym - .Lpc.
+void AArch64AsmPrinter::LowerMOVaddrPREL(const MachineInstr &MI) {
+  Register DstReg = MI.getOperand(0).getReg();
+  assert(DstReg != AArch64::X17 && "GPR64noip destination expected");
+
+  const MachineOperand &MO = MI.getOperand(1);
+  MCSymbol *Sym;
+  if (MO.isGlobal())
+    Sym =
+        MCInstLowering.GetGlobalValueSymbol(MO.getGlobal(), /*TargetFlags=*/0);
+  else if (MO.isSymbol())
+    Sym = MCInstLowering.GetExternalSymbolSymbol(MO);
+  else if (MO.isBlockAddress())
+    Sym = GetBlockAddressSymbol(MO.getBlockAddress());
+  else if (MO.isCPI())
+    Sym = GetCPISymbol(MO.getIndex());
+  else if (MO.isJTI())
+    Sym = GetJTISymbol(MO.getIndex());
+  else
+    llvm_unreachable("Unexpected operand for MOVaddrPREL");
+
+  MCSymbol *PCSym = OutContext.createTempSymbol();
+  OutStreamer->emitLabel(PCSym);
+
+  EmitToStreamer(MCInstBuilder(AArch64::ADR)
+                     .addReg(DstReg)
+                     .addExpr(MCSymbolRefExpr::create(PCSym, OutContext)));
+
+  static const struct {
+    unsigned Opc;
+    uint16_t Spec;
+    unsigned Shift;
+  } Chunks[] = {
+      {AArch64::MOVZXi, AArch64::S_PREL_G3, 48},
+      {AArch64::MOVKXi, AArch64::S_PREL_G2_NC, 32},
+      {AArch64::MOVKXi, AArch64::S_PREL_G1_NC, 16},
+      {AArch64::MOVKXi, AArch64::S_PREL_G0_NC, 0},
+  };
+
+  // Jump table entries have no addend; every other kind of symbol may carry
+  // one, which is folded in alongside the PC-bias compensation below.
+  int64_t SymOffset = MO.isJTI() ? 0 : MO.getOffset();
+
+  // Distance of each MOVZ/MOVK from the ADR above, which is its addend.
+  int64_t Addend = 4;
+  for (const auto &C : Chunks) {
+    const MCExpr *Expr = MCSymbolRefExpr::create(Sym, OutContext);
+    Expr = MCBinaryExpr::createAdd(
+        Expr, MCConstantExpr::create(Addend + SymOffset, OutContext),
+        OutContext);
+    Expr = MCSpecifierExpr::create(Expr, C.Spec, OutContext);
+
+    MCInstBuilder MIB(C.Opc);
+    MIB.addReg(AArch64::X17);
+    // MOVK reads and writes its destination.
+    if (C.Opc == AArch64::MOVKXi)
+      MIB.addReg(AArch64::X17);
+    MIB.addExpr(Expr).addImm(C.Shift);
+    EmitToStreamer(MIB);
+
+    Addend += 4;
+  }
+
+  // add $dst, $dst, x17
+  EmitToStreamer(MCInstBuilder(AArch64::ADDXrs)
+                     .addReg(DstReg)
+                     .addReg(DstReg)
+                     .addReg(AArch64::X17)
+                     .addImm(0));
+}
+
 void AArch64AsmPrinter::LowerLOADgotAUTH(const MachineInstr &MI) {
   Register DstReg = MI.getOperand(0).getReg();
   Register AuthResultReg = STI->hasFPAC() ? DstReg : AArch64::X16;
@@ -3476,6 +3554,10 @@ void AArch64AsmPrinter::emitInstruction(const MachineInstr *MI) {
 
   case AArch64::LOADgotAUTH:
     LowerLOADgotAUTH(*MI);
+    return;
+
+  case AArch64::MOVaddrPREL:
+    LowerMOVaddrPREL(*MI);
     return;
 
   case AArch64::BRA:

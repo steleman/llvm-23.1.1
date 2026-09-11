@@ -29,7 +29,7 @@ body:             |
     ; LARGE-PIC-LABEL: name: select_gv_with_offset
     ; LARGE-PIC: liveins: $x0
     ; LARGE-PIC-NEXT: {{  $}}
-    ; LARGE-PIC-NEXT: %g:gpr64common = MOVaddr target-flags(aarch64-page) @g + 1, target-flags(aarch64-pageoff, aarch64-nc) @g + 1
+    ; LARGE-PIC-NEXT: %g:gpr64noip = MOVaddrPREL @g + 1, implicit-def $x17
     ; LARGE-PIC-NEXT: $x0 = COPY %g
     ; LARGE-PIC-NEXT: RET_ReallyLR implicit $x0
     ;
