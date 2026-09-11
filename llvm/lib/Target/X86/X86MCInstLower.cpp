@@ -593,6 +593,74 @@ void X86AsmPrinter::LowerTlsAddr(X86MCInstLower &MCInstLowering,
             .addReg(0)
             .addExpr(Expr)
             .addReg(0));
+  } else if (Is64Bits && TM.getCodeModel() == CodeModel::Large &&
+             TM.isPositionIndependent()) {
+    // Large code model: __tls_get_addr may be further than 2GiB away, so it
+    // cannot be reached with the 32-bit PC-relative call used below. Compute
+    // the GOT base with a 64-bit displacement and call through a 64-bit
+    // PLTOFF, which is the sequence GCC emits for -mcmodel=large.
+    //
+    // No DATA16 padding here: that exists to make the small-model sequence a
+    // fixed size for the linker's GD-to-IE/LE relaxation, which does not apply
+    // to this form.
+    //
+    // The four instructions from the LEA onwards are byte-matched by the
+    // linker when it relaxes general-dynamic to initial-exec or local-exec, so
+    // the registers are fixed by the ABI, not free choices: the PLTOFF value
+    // must land in RAX and the GOT base must be RBX. Substituting
+    // call-clobbered registers changes the encodings and the sequence length,
+    // and the relaxation then fails with "TLS transition ... failed".
+    //
+    // RBX is callee-saved, so it is saved around the sequence, as GCC does.
+    MCSymbol *PICBase = Ctx.createTempSymbol();
+
+    EmitAndCountInstruction(MCInstBuilder(X86::PUSH64r).addReg(X86::RBX));
+    OutStreamer->emitCFIAdjustCfaOffset(8);
+    OutStreamer->emitLabel(PICBase);
+
+    // leaq PICBase(%rip), %rbx
+    EmitAndCountInstruction(MCInstBuilder(X86::LEA64r)
+                                .addReg(X86::RBX)
+                                .addReg(X86::RIP)
+                                .addImm(1)
+                                .addReg(0)
+                                .addExpr(MCSymbolRefExpr::create(PICBase, Ctx))
+                                .addReg(0));
+    // movabsq $_GLOBAL_OFFSET_TABLE_-PICBase, %r11 ; addq %r11, %rbx
+    const MCExpr *GotPC = MCBinaryExpr::createSub(
+        MCSymbolRefExpr::create(Ctx.getOrCreateSymbol("_GLOBAL_OFFSET_TABLE_"),
+                                Ctx),
+        MCSymbolRefExpr::create(PICBase, Ctx), Ctx);
+    EmitAndCountInstruction(
+        MCInstBuilder(X86::MOV64ri).addReg(X86::R11).addExpr(GotPC));
+    EmitAndCountInstruction(MCInstBuilder(X86::ADD64rr)
+                                .addReg(X86::RBX)
+                                .addReg(X86::RBX)
+                                .addReg(X86::R11));
+
+    // The ABI-fixed part begins here.
+    // leaq sym@tlsgd(%rip), %rdi
+    EmitAndCountInstruction(MCInstBuilder(X86::LEA64r)
+                                .addReg(X86::RDI)
+                                .addReg(X86::RIP)
+                                .addImm(1)
+                                .addReg(0)
+                                .addExpr(Sym)
+                                .addReg(0));
+    // movabsq $__tls_get_addr@PLTOFF, %rax ; addq %rbx, %rax ; call *%rax
+    const MCSymbol *TlsGetAddr = Ctx.getOrCreateSymbol("__tls_get_addr");
+    EmitAndCountInstruction(
+        MCInstBuilder(X86::MOV64ri)
+            .addReg(X86::RAX)
+            .addExpr(MCSymbolRefExpr::create(TlsGetAddr, X86::S_PLTOFF, Ctx)));
+    EmitAndCountInstruction(MCInstBuilder(X86::ADD64rr)
+                                .addReg(X86::RAX)
+                                .addReg(X86::RAX)
+                                .addReg(X86::RBX));
+    EmitAndCountInstruction(MCInstBuilder(X86::CALL64r).addReg(X86::RAX));
+
+    EmitAndCountInstruction(MCInstBuilder(X86::POP64r).addReg(X86::RBX));
+    OutStreamer->emitCFIAdjustCfaOffset(-8);
   } else if (Is64Bits) {
     bool NeedsPadding = Specifier == X86::S_TLSGD;
     if (NeedsPadding && Is64BitsLP64)
