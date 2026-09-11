@@ -93,6 +93,26 @@ private:
 };
 
 //===----------------------------------------------------------------------===//
+// OpaqueProperties
+//===----------------------------------------------------------------------===//
+
+/// Simple wrapper around a void* in order to express generically how to pass
+/// in op properties through APIs.
+class OpaqueProperties {
+public:
+  OpaqueProperties() : properties(nullptr) {}
+  OpaqueProperties(void *prop) : properties(prop) {}
+  operator bool() const { return properties != nullptr; }
+  template <typename Dest>
+  Dest as() const {
+    return static_cast<Dest>(const_cast<void *>(properties));
+  }
+
+private:
+  void *properties;
+};
+
+//===----------------------------------------------------------------------===//
 // OperationName
 //===----------------------------------------------------------------------===//
 

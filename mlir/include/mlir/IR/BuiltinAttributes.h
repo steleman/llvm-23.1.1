@@ -765,6 +765,7 @@ using DenseI32ArrayAttr = detail::DenseArrayAttrImpl<int32_t>;
 using DenseI64ArrayAttr = detail::DenseArrayAttrImpl<int64_t>;
 using DenseF32ArrayAttr = detail::DenseArrayAttrImpl<float>;
 using DenseF64ArrayAttr = detail::DenseArrayAttrImpl<double>;
+using DenseTypedElementsAttr = mlir::DenseIntOrFPElementsAttr;
 
 //===----------------------------------------------------------------------===//
 // DenseResourceElementsAttr

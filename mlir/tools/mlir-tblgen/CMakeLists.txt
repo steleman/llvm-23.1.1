@@ -35,6 +35,8 @@ add_tablegen(mlir-tblgen MLIR
   SPIRVUtilsGen.cpp
   TosaUtilsGen.cpp
   CppGenUtilities.cpp
+  VMOpTableGen.cpp
+  VMOpEncoderGen.cpp
   )
 
 target_link_libraries(mlir-tblgen
