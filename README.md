@@ -1,3 +1,36 @@
+# LLVM 23.1.1 Fork
+
+This is my research fork of LLVM 23.1.1. It contains several significant changes:
+
+- `ca3c039f3ae6da7b6014096da42a27e62df189a1`: support for `-mcmodel=large` PIC on AArch64.
+- `608b46bda174cb88e8e432313a0eb0ac02c689b0`: support for `-mcmodel=large` PIC on RISCV64.
+- `e85a34fc551e655843793774e136bf6f65859bff`: support for large TLS PIC on x86_64.
+- `1005826ab2771b84a2db45c19adfb270b5ee1cb7`: support for building IREE 3.11.0.
+
+## Notes:
+
+- Code compiled with `-mcmodel=large -fPIC` on AArch64 will be ABI incompatible
+with code compiled by GCC + Binutils, or with code compiled with LLVM Upstream.
+
+- Code compiled with `-mcmodel=large -fPIC` on RISCV64 will be ABI incompatible
+with code compiled by GCC + Binutils, or with code compiled with LLVM Upstream.
+
+- Code compiled with `-mcmode=large -fPIC` on x86_64 is *probably* ABI compatible
+with code compiled by GCC + Binutils, or with code compiled with LLVM Upstream.
+
+- The option `-mcmodel=large -fPIC` is *not* supported on RISCV32.
+
+Relevant documentation files:
+
+- [README.AArch64](README.AArch64.md)
+- [RFC-AArch64-MCModel-Large-PIC](RFC-AArch64-MCModel-Large-PIC.md)
+- [README.RISCV](README.RISCV.md)
+- [RISCV-DESIGN](RISCV-DESIGN.md)
+- [RISCV-POST-388](RISCV-POST-388.md)
+- [README.x86_64](README.x86_64.md)
+
+The rest below is the canonical README from LLVM Upstream.
+
 # The LLVM Compiler Infrastructure
 
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/llvm/llvm-project/badge)](https://securityscorecards.dev/viewer/?uri=github.com/llvm/llvm-project)
