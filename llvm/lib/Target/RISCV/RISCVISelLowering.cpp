@@ -19,6 +19,7 @@
 #include "RISCVRegisterInfo.h"
 #include "RISCVSelectionDAGInfo.h"
 #include "RISCVSubtarget.h"
+#include "RISCVTargetMachine.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
@@ -9814,6 +9815,77 @@ static SDValue getLargeGlobalAddress(GlobalAddressSDNode *N, const SDLoc &DL,
       MachinePointerInfo::getConstantPool(DAG.getMachineFunction()));
 }
 
+// Prototype large PIC model: the pool entry holds the displacement from itself
+// to the symbol, so the pool needs no dynamic relocation and can stay in a
+// read-only section within auipc range of the code.
+//
+//   auipc/addi -> &entry        (LLA)
+//   ld         -> sym - &entry
+//   add        -> sym
+//
+// This handles non-preemptible symbols only. A preemptible symbol's distance
+// is not a link-time constant, so it needs a writable indirection slot; see
+// the note in getAddr.
+// Address of this function's indirection table. One pool entry bootstraps it,
+// so the cost is paid once per function rather than per symbol; the sequence
+// is loop-invariant and hoists.
+static SDValue getLargePICTableBase(const SDLoc &DL, EVT Ty,
+                                    SelectionDAG &DAG) {
+  MachineFunction &MF = DAG.getMachineFunction();
+  MCSymbol *Table = getLargePICTableSymbol(MF, MF.getContext());
+  RISCVConstantPoolValue *CPV = RISCVConstantPoolValue::CreatePCRelativeTable(
+      *DAG.getContext(), Table->getName());
+  SDValue CPAddr = DAG.getTargetConstantPool(CPV, Ty, Align(8));
+  SDValue EntryAddr = DAG.getNode(RISCVISD::LLA, DL, Ty, CPAddr);
+  SDValue Disp = DAG.getLoad(Ty, DL, DAG.getEntryNode(), EntryAddr,
+                             MachinePointerInfo::getConstantPool(MF));
+  return DAG.getNode(ISD::ADD, DL, Ty, EntryAddr, Disp);
+}
+
+// Load a preemptible target's address out of this function's table.
+static SDValue getLargePICIndirect(MCSymbol *Target, const SDLoc &DL, EVT Ty,
+                                   SelectionDAG &DAG) {
+  MachineFunction &MF = DAG.getMachineFunction();
+  unsigned Idx =
+      MF.getInfo<RISCVMachineFunctionInfo>()->getOrCreateLargePICSlot(Target);
+  SDValue Base = getLargePICTableBase(DL, Ty, DAG);
+  SDValue Addr = DAG.getNode(ISD::ADD, DL, Ty, Base,
+                             DAG.getConstant(Idx * Ty.getStoreSize(), DL, Ty));
+  // The slot is written once at load time and read-only thereafter, so the
+  // load is invariant, as it is for a GOT entry.
+  return DAG.getLoad(Ty, DL, DAG.getEntryNode(), Addr,
+                     MachinePointerInfo::getGOT(MF), MaybeAlign(),
+                     MachineMemOperand::MODereferenceable |
+                         MachineMemOperand::MOInvariant);
+}
+
+// A non-preemptible target's displacement is a link-time constant and is held
+// directly in the pool entry, so it needs no slot and no dynamic relocation.
+static SDValue getLargePICGlobalAddress(GlobalAddressSDNode *N, const SDLoc &DL,
+                                        EVT Ty, SelectionDAG &DAG,
+                                        bool Indirect) {
+  MachineFunction &MF = DAG.getMachineFunction();
+  if (Indirect)
+    return getLargePICIndirect(MF.getTarget().getSymbol(N->getGlobal()), DL, Ty,
+                               DAG);
+
+  RISCVConstantPoolValue *CPV =
+      RISCVConstantPoolValue::CreatePCRelative(N->getGlobal());
+  SDValue CPAddr = DAG.getTargetConstantPool(CPV, Ty, Align(8));
+  SDValue EntryAddr = DAG.getNode(RISCVISD::LLA, DL, Ty, CPAddr);
+  SDValue Disp = DAG.getLoad(Ty, DL, DAG.getEntryNode(), EntryAddr,
+                             MachinePointerInfo::getConstantPool(MF));
+  return DAG.getNode(ISD::ADD, DL, Ty, EntryAddr, Disp);
+}
+
+static SDValue getLargePICExternalSymbol(ExternalSymbolSDNode *N,
+                                         const SDLoc &DL, EVT Ty,
+                                         SelectionDAG &DAG) {
+  MachineFunction &MF = DAG.getMachineFunction();
+  return getLargePICIndirect(MF.getContext().getOrCreateSymbol(N->getSymbol()),
+                             DL, Ty, DAG);
+}
+
 static SDValue getLargeExternalSymbol(ExternalSymbolSDNode *N, const SDLoc &DL,
                                       EVT Ty, SelectionDAG &DAG) {
   RISCVConstantPoolValue *CPV =
@@ -9836,6 +9908,16 @@ SDValue RISCVTargetLowering::getAddr(NodeTy *N, SelectionDAG &DAG,
   // is incompatible with existing code models. This also applies to non-pic
   // mode.
   if (isPositionIndependent() || Subtarget.allowTaggedGlobals()) {
+    // Prototype large PIC model. Without this the code model is ignored on
+    // this path entirely and the +/-2GiB sequences below are used whatever was
+    // requested.
+    if (getTargetMachine().getCodeModel() == CodeModel::Large &&
+        isPositionIndependent() && !Subtarget.allowTaggedGlobals() &&
+        riscvEnableLargePIC()) {
+      if (auto *G = dyn_cast<GlobalAddressSDNode>(N))
+        return getLargePICGlobalAddress(G, DL, Ty, DAG, /*Indirect=*/!IsLocal);
+    }
+
     SDValue Addr = getTargetNode(N, DL, Ty, DAG, 0);
     if (IsLocal && !Subtarget.allowTaggedGlobals())
       // Use PC-relative addressing to access the symbol. This generates the
@@ -26058,10 +26140,22 @@ SDValue RISCVTargetLowering::LowerCall(CallLoweringInfo &CLI,
   // split it and then direct call can be matched by PseudoCALL.
   bool CalleeIsLargeExternalSymbol = false;
   if (getTargetMachine().getCodeModel() == CodeModel::Large) {
-    if (auto *S = dyn_cast<GlobalAddressSDNode>(Callee))
-      Callee = getLargeGlobalAddress(S, DL, PtrVT, DAG);
-    else if (auto *S = dyn_cast<ExternalSymbolSDNode>(Callee)) {
-      Callee = getLargeExternalSymbol(S, DL, PtrVT, DAG);
+    // Under the prototype large PIC model a call target is materialized the
+    // same way as any other address: the absolute pool entry used below would
+    // need a dynamic relocation in .text.
+    bool LargePIC = isPositionIndependent() && riscvEnableLargePIC();
+    if (auto *S = dyn_cast<GlobalAddressSDNode>(Callee)) {
+      if (LargePIC) {
+        bool IsLocal = getTargetMachine().shouldAssumeDSOLocal(S->getGlobal());
+        Callee = getLargePICGlobalAddress(S, DL, PtrVT, DAG, !IsLocal);
+      } else {
+        Callee = getLargeGlobalAddress(S, DL, PtrVT, DAG);
+      }
+    } else if (auto *S = dyn_cast<ExternalSymbolSDNode>(Callee)) {
+      // An external symbol is a libcall target and always preemptible here, so
+      // it goes through an indirection slot like any other preemptible symbol.
+      Callee = LargePIC ? getLargePICExternalSymbol(S, DL, PtrVT, DAG)
+                        : getLargeExternalSymbol(S, DL, PtrVT, DAG);
       CalleeIsLargeExternalSymbol = true;
     }
   } else if (GlobalAddressSDNode *S = dyn_cast<GlobalAddressSDNode>(Callee)) {

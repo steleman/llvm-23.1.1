@@ -19,20 +19,44 @@
 
 using namespace llvm;
 
-RISCVConstantPoolValue::RISCVConstantPoolValue(Type *Ty, const GlobalValue *GV)
-    : MachineConstantPoolValue(Ty), GV(GV), Kind(RISCVCPKind::GlobalValue) {}
+RISCVConstantPoolValue::RISCVConstantPoolValue(Type *Ty, const GlobalValue *GV,
+                                               Form EntryForm)
+    : MachineConstantPoolValue(Ty), GV(GV), EntryForm(EntryForm),
+      Kind(RISCVCPKind::GlobalValue) {}
 
-RISCVConstantPoolValue::RISCVConstantPoolValue(LLVMContext &C, StringRef S)
-    : MachineConstantPoolValue(Type::getInt64Ty(C)), S(S),
+RISCVConstantPoolValue::RISCVConstantPoolValue(LLVMContext &C, StringRef S,
+                                               Form EntryForm)
+    : MachineConstantPoolValue(Type::getInt64Ty(C)), S(S), EntryForm(EntryForm),
       Kind(RISCVCPKind::ExtSymbol) {}
 
 RISCVConstantPoolValue *RISCVConstantPoolValue::Create(const GlobalValue *GV) {
-  return new RISCVConstantPoolValue(GV->getType(), GV);
+  return new RISCVConstantPoolValue(GV->getType(), GV, Form::Absolute);
+}
+
+RISCVConstantPoolValue *
+RISCVConstantPoolValue::CreatePCRelative(const GlobalValue *GV) {
+  return new RISCVConstantPoolValue(GV->getType(), GV, Form::PCRel);
+}
+
+RISCVConstantPoolValue *
+RISCVConstantPoolValue::CreatePCRelativeIndirect(const GlobalValue *GV) {
+  return new RISCVConstantPoolValue(GV->getType(), GV, Form::PCRelIndirect);
 }
 
 RISCVConstantPoolValue *RISCVConstantPoolValue::Create(LLVMContext &C,
                                                        StringRef S) {
-  return new RISCVConstantPoolValue(C, S);
+  return new RISCVConstantPoolValue(C, S, Form::Absolute);
+}
+
+RISCVConstantPoolValue *
+RISCVConstantPoolValue::CreatePCRelativeIndirect(LLVMContext &C, StringRef S) {
+  return new RISCVConstantPoolValue(C, S, Form::PCRelIndirect);
+}
+
+RISCVConstantPoolValue *
+RISCVConstantPoolValue::CreatePCRelativeTable(LLVMContext &C,
+                                              StringRef TableSym) {
+  return new RISCVConstantPoolValue(C, TableSym, Form::PCRelTable);
 }
 
 int RISCVConstantPoolValue::getExistingMachineCPValue(MachineConstantPool *CP,
@@ -52,6 +76,7 @@ int RISCVConstantPoolValue::getExistingMachineCPValue(MachineConstantPool *CP,
 }
 
 void RISCVConstantPoolValue::addSelectionDAGCSEId(FoldingSetNodeID &ID) {
+  ID.AddInteger(static_cast<unsigned>(EntryForm));
   if (isGlobalValue())
     ID.AddPointer(GV);
   else {
@@ -70,6 +95,10 @@ void RISCVConstantPoolValue::print(raw_ostream &O) const {
 }
 
 bool RISCVConstantPoolValue::equals(const RISCVConstantPoolValue *A) const {
+  // The two flavors hold different values for the same symbol, so an absolute
+  // entry must never be reused for a PC-relative one or vice versa.
+  if (EntryForm != A->EntryForm)
+    return false;
   if (isGlobalValue() && A->isGlobalValue())
     return GV == A->GV;
   if (isExtSymbol() && A->isExtSymbol())

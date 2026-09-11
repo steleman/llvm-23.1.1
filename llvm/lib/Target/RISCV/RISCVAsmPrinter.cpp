@@ -23,6 +23,7 @@
 #include "RISCVRegisterInfo.h"
 #include "TargetInfo/RISCVTargetInfo.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/CodeGen/AsmPrinter.h"
@@ -41,6 +42,7 @@
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetLoweringObjectFile.h"
 #include "llvm/TargetParser/RISCVISAInfo.h"
 #include "llvm/Transforms/Instrumentation/HWAddressSanitizer.h"
 
@@ -117,6 +119,10 @@ public:
   void emitTargetFeaturePop(const MCSubtargetInfo &STI, bool DidPush) override;
 
   void emitNoteGnuProperty(const Module &M);
+  void emitFunctionBodyEnd() override;
+
+  /// Emit this function's large-PIC indirection table, if it has one.
+  void emitLargePICTable();
 
 private:
   void emitAttributes(const MCSubtargetInfo &SubtargetInfo);
@@ -658,6 +664,30 @@ void RISCVAsmPrinter::emitStartOfAsmFile(Module &M) {
   if (TM.getTargetTriple().isOSBinFormatELF())
     emitAttributes(SubtargetInfo);
 }
+
+// Emit the indirection table for the prototype large PIC model. Each slot
+// holds a symbol address and so takes a dynamic relocation, which is why the
+// table lives in .data.rel.ro rather than beside the code: writable while
+// relocations are applied, read-only afterwards. A pool entry reaches it with
+// a full 64-bit displacement, so it may sit arbitrarily far from the code.
+void RISCVAsmPrinter::emitLargePICTable() {
+  const auto *MFI = MF->getInfo<RISCVMachineFunctionInfo>();
+  ArrayRef<MCSymbol *> Slots = MFI->getLargePICSlots();
+  if (Slots.empty())
+    return;
+
+  const DataLayout &DL = getDataLayout();
+  OutStreamer->pushSection();
+  OutStreamer->switchSection(getObjFileLowering().getDataRelROSection());
+  OutStreamer->emitValueToAlignment(Align(DL.getPointerSize()));
+  OutStreamer->emitLabel(getLargePICTableSymbol(*MF, OutContext));
+  for (MCSymbol *Target : Slots)
+    OutStreamer->emitValue(MCSymbolRefExpr::create(Target, OutContext),
+                           DL.getPointerSize());
+  OutStreamer->popSection();
+}
+
+void RISCVAsmPrinter::emitFunctionBodyEnd() { emitLargePICTable(); }
 
 void RISCVAsmPrinter::emitEndOfAsmFile(Module &M) {
   RISCVTargetStreamer &RTS = getTargetStreamer();
@@ -1317,6 +1347,26 @@ void RISCVAsmPrinter::emitMachineConstantPoolValue(
 
   const MCExpr *Expr = MCSymbolRefExpr::create(MCSym, OutContext);
   uint64_t Size = getDataLayout().getTypeAllocSize(RCPV->getType());
+
+  if (RCPV->isPCRelative()) {
+    // Emit the displacement from this entry to the target rather than the
+    // target's address. A label placed here gives the entry's own address; the
+    // difference is a link-time constant, so it takes an ADD64/SUB64 pair
+    // rather than a dynamic relocation and the pool can stay read-only.
+    //
+    // For a preemptible target the displacement is to a writable slot holding
+    // its address, since the distance to the symbol itself is not known until
+    // load time.
+    if (RCPV->isTable())
+      Expr = MCSymbolRefExpr::create(
+          OutContext.getOrCreateSymbol(RCPV->getSymbol()), OutContext);
+
+    MCSymbol *Here = OutContext.createTempSymbol();
+    OutStreamer->emitLabel(Here);
+    Expr = MCBinaryExpr::createSub(
+        Expr, MCSymbolRefExpr::create(Here, OutContext), OutContext);
+  }
+
   OutStreamer->emitValue(Expr, Size);
 }
 

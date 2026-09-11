@@ -18,6 +18,7 @@
 #include "llvm/CodeGen/MIRYamlMapping.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/MC/MCContext.h"
 
 namespace llvm {
 
@@ -45,8 +46,23 @@ template <> struct MappingTraits<RISCVMachineFunctionInfo> {
 
 /// RISCVMachineFunctionInfo - This class is derived from MachineFunctionInfo
 /// and contains private RISCV-specific information for each MachineFunction.
+/// Label of \p MF's large-PIC indirection table. Shared between lowering,
+/// which references it from a constant pool entry, and the AsmPrinter, which
+/// emits it.
+inline MCSymbol *getLargePICTableSymbol(const MachineFunction &MF,
+                                        MCContext &Ctx) {
+  return Ctx.getOrCreateSymbol(Twine(".Lrvlp_tbl.") + MF.getName());
+}
+
 class RISCVMachineFunctionInfo : public MachineFunctionInfo {
 private:
+  /// Targets needing an indirection slot in this function's large-PIC table,
+  /// in allocation order; a target's index is its position in the table. Only
+  /// preemptible targets need one -- a local symbol's displacement is a
+  /// link-time constant and is held directly in the pool entry.
+  SmallVector<MCSymbol *, 4> LargePICSlots;
+  DenseMap<MCSymbol *, unsigned> LargePICSlotIndex;
+
   /// FrameIndex for start of varargs area
   int VarArgsFrameIndex = 0;
   /// Size of the save area used for varargs
@@ -99,6 +115,17 @@ private:
   bool CFProtectionBranch = false;
 
 public:
+  /// Index of \p Target's slot in this function's large-PIC table, allocating
+  /// one if this is its first use.
+  unsigned getOrCreateLargePICSlot(MCSymbol *Target) {
+    auto [It, Inserted] =
+        LargePICSlotIndex.try_emplace(Target, LargePICSlots.size());
+    if (Inserted)
+      LargePICSlots.push_back(Target);
+    return It->second;
+  }
+  ArrayRef<MCSymbol *> getLargePICSlots() const { return LargePICSlots; }
+
   RISCVMachineFunctionInfo(const Function &F, const RISCVSubtarget *STI);
 
   MachineFunctionInfo *
