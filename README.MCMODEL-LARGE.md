@@ -537,3 +537,6 @@ Plain `-g` creates `.debug_info` relocations that cross over the 2GB limit, and
 some unittests and libraries fail to link with `ld.bfd`. Using `-g0` allows
 everything to link successfully with GCC and Binutils `ld.bfd`.
 
+My build scripts are in the [build-scripts](build-scripts) directory.
+
+
