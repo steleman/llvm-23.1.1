@@ -5,10 +5,13 @@ This directory holds LLVM and Clang work that completes the large code model
 position-independent code (`-fpic`/`-fPIC`), where upstream LLVM either
 rejected the combination or silently fell back to ±2–4 GiB sequences.
 
-The work is eleven commits on branch `mcmodel-large` in
-`llvm-project-mcmodel-large/`, based directly on the `llvmorg-23.1.1`
-release tag (`6dfe1677ab8d`), not on `main`. None are pushed. Each group is
-exported as a patch series in a sibling directory:
+The work is based on eleven commits on a branch named `mcmodel-large` in
+`llvm-project-mcmodel-large/`. The branch is based directly on the `llvmorg-23.1.1`
+release tag (`6dfe1677ab8d`).
+
+As of 2026-09-19 all commits are merged and pushed to the `main` branch and to Github.
+
+---
 
 | Directory | Commits | Target | Kind |
 |---|---|---|---|
@@ -32,6 +35,11 @@ Companion series, which implement the same models so objects interoperate:
 | GCC 16.2.0 | `/src/steleman/programming/gcc-mcmodel-large/16.2.0/gcc16-mcmodel-large-pic` |
 | GCC 16.0.1 | `/src/steleman/programming/gcc-mcmodel-large/16.0.1/gcc16-mcmodel-large-pic` |
 | GNU binutils 2.46.1 | `/src/steleman/programming/binutils-mcmodel-large/2.46.1/binutils-mcmodel-large-pic` |
+
+---
+
+GCC 16.2.0 and GNU Binutils 2.46.1 with ABI compatible changes will be committed
+to my Github very shortly.
 
 ---
 
@@ -523,3 +531,9 @@ commits. Configure a fresh directory to test the full branch.
 `LLVM_ENABLE_PROJECTS=lld`, `LLVM_TARGETS_TO_BUILD="AArch64;RISCV;X86"`),
 with `llc`, `lld`, `llvm-mc` and the lit tools built but not `clang`. The
 MachO RISCV MC tests also need `llvm-otool` built.
+
+If you build as `RelWithDebInfo` with GCC, please use `-g0` instead of plain `-g`.
+Plain `-g` creates `.debug_info` relocations that cross over the 2GB limit, and
+some unittests and libraries fail to link with `ld.bfd`. Using `-g0` allows
+everything to link successfully with GCC and Binutils `ld.bfd`.
+
