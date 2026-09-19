@@ -6,6 +6,8 @@ This is my research fork of LLVM 23.1.1. It contains several significant changes
 - `608b46bda174cb88e8e432313a0eb0ac02c689b0`: support for `-mcmodel=large` PIC on RISCV64.
 - `e85a34fc551e655843793774e136bf6f65859bff`: support for large TLS PIC on x86_64.
 - `1005826ab2771b84a2db45c19adfb270b5ee1cb7`: support for building IREE 3.11.0.
+- `7262ca593830da72101db6e65537de3368dd092f`: Bug fixes for .eh_frame and FDE
+                                              relocations on RISCV with -mcmodel=large -fPIC.
 
 ## Notes:
 
@@ -32,7 +34,7 @@ Relevant documentation files:
 
 The rest below is the canonical README from LLVM Upstream.
 
-=====
+-----
 
 # The LLVM Compiler Infrastructure
 
