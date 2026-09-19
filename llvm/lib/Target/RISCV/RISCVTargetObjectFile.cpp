@@ -193,6 +193,18 @@ MCSection *RISCVELFTargetObjectFile::getSectionForConstant(
                                                             Alignment, F);
 }
 
+bool RISCVELFTargetObjectFile::shouldPutJumpTableInFunctionSection(
+    bool UsesLabelDifference, const Function &F) const {
+  // The large code model reaches jump tables PC-relatively, like constant
+  // pools, so they have to stay within auipc range of the code referring to
+  // them. .rodata may be further away than that.
+  if (TM->getCodeModel() == CodeModel::Large)
+    return true;
+
+  return TargetLoweringObjectFileELF::shouldPutJumpTableInFunctionSection(
+      UsesLabelDifference, F);
+}
+
 void RISCVMachOTargetObjectFile::getNameWithPrefix(
     SmallVectorImpl<char> &OutName, const GlobalValue *GV,
     const TargetMachine &TM) const {

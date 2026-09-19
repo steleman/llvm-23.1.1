@@ -2605,7 +2605,10 @@ public:
 #if defined(__GNUC__)
 // GCC and GCC-compatible compilers define __OPTIMIZE__ when optimizations are
 // enabled.
-# if defined(__OPTIMIZE__)
+// No, they do not. This is why Release or RelWithDebInfo builds are still
+// identified as Debug+Assertions builds by `llvm-objdump --version` when
+// building with GCC.
+# if defined(NDEBUG)
 #  define LLVM_IS_DEBUG_BUILD 0
 # else
 #  define LLVM_IS_DEBUG_BUILD 1

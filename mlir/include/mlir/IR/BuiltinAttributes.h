@@ -706,9 +706,7 @@ using DenseResourceElementsHandle = DialectResourceBlobHandle<BuiltinDialect>;
 namespace mlir {
 /// DenseIntOrFPElementsAttr was renamed to DenseTypedElementsAttr. This alias
 /// is provided for backwards compatibility. It will be removed in the future.
-using DenseIntOrFPElementsAttr [[deprecated(
-    "DenseIntOrFPElementsAttr has been renamed to DenseTypedElementsAttr")]] =
-    DenseTypedElementsAttr;
+using DenseIntOrFPElementsAttr = DenseTypedElementsAttr;
 
 //===----------------------------------------------------------------------===//
 // DenseArrayAttr

@@ -44,6 +44,9 @@ public:
                                    const Constant *C, Align &Alignment,
                                    const Function *F) const override;
 
+  bool shouldPutJumpTableInFunctionSection(bool UsesLabelDifference,
+                                           const Function &F) const override;
+
   void getModuleMetadata(Module &M) override;
 
   bool isInSmallSection(uint64_t Size) const;

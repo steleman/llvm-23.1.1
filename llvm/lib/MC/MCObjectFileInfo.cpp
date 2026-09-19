@@ -367,6 +367,8 @@ void MCObjectFileInfo::initELFMCObjectFileInfo(const Triple &T, bool Large) {
   case Triple::ppc64le:
   case Triple::aarch64:
   case Triple::aarch64_be:
+  case Triple::riscv64:
+  case Triple::riscv64be:
   case Triple::x86_64:
     FDECFIEncoding = dwarf::DW_EH_PE_pcrel |
                      ((Large || Ctx->getTargetOptions().LargeEHEncoding)

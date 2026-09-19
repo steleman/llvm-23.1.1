@@ -250,14 +250,21 @@ void TargetLoweringObjectFileELF::Initialize(MCContext &Ctx,
   case Triple::riscv32:
   case Triple::riscv64:
   case Triple::riscv32be:
-  case Triple::riscv64be:
-    LSDAEncoding = dwarf::DW_EH_PE_pcrel | dwarf::DW_EH_PE_sdata4;
-    PersonalityEncoding = dwarf::DW_EH_PE_indirect | dwarf::DW_EH_PE_pcrel |
-                          dwarf::DW_EH_PE_sdata4;
-    TTypeEncoding = dwarf::DW_EH_PE_indirect | dwarf::DW_EH_PE_pcrel |
-                    dwarf::DW_EH_PE_sdata4;
+  case Triple::riscv64be: {
+    // The large code model makes no assumptions about the distance between
+    // code and data, so 32-bit PC-relative pointers may not reach.  This
+    // matches the FDE encoding chosen in MCObjectFileInfo, and GCC.
+    unsigned Size = TgtM.getTargetTriple().isRISCV64() &&
+                            TgtM.getCodeModel() == CodeModel::Large
+                        ? dwarf::DW_EH_PE_sdata8
+                        : dwarf::DW_EH_PE_sdata4;
+    LSDAEncoding = dwarf::DW_EH_PE_pcrel | Size;
+    PersonalityEncoding =
+        dwarf::DW_EH_PE_indirect | dwarf::DW_EH_PE_pcrel | Size;
+    TTypeEncoding = dwarf::DW_EH_PE_indirect | dwarf::DW_EH_PE_pcrel | Size;
     CallSiteEncoding = dwarf::DW_EH_PE_udata4;
     break;
+  }
   case Triple::sparcv9:
     LSDAEncoding = dwarf::DW_EH_PE_pcrel | dwarf::DW_EH_PE_sdata4;
     if (isPositionIndependent()) {

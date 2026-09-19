@@ -42,9 +42,16 @@ const MCExpr *RISCVMCAsmInfo::getExprForFDESymbol(const MCSymbol *Sym,
   // Processing this relocation pair is problematic when linker relaxation is
   // enabled, so we follow binutils in using the R_RISCV_32_PCREL relocation
   // for the FDE initial location.
+  //
+  // There is no 64-bit PC-relative data relocation, so the 8-byte encoding
+  // used by the large code model has to use the ADD64/SUB64 pair, as GCC and
+  // GNU as do.
+  if ((Encoding & 0x0f) == dwarf::DW_EH_PE_sdata8)
+    return MCAsmInfo::getExprForFDESymbol(Sym, Encoding, Streamer);
+
   MCContext &Ctx = Streamer.getContext();
   const MCExpr *ME = MCSymbolRefExpr::create(Sym, Ctx);
-  assert(Encoding & dwarf::DW_EH_PE_sdata4 && "Unexpected encoding");
+  assert((Encoding & 0x0f) == dwarf::DW_EH_PE_sdata4 && "Unexpected encoding");
   return MCSpecifierExpr::create(ME, ELF::R_RISCV_32_PCREL, Ctx);
 }
 
