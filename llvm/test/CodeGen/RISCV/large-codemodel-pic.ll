@@ -1,10 +1,13 @@
 ; RUN: llc -mtriple=riscv64 -code-model=large -relocation-model=pic \
-; RUN:   -riscv-large-pic -o - %s | FileCheck %s
-; RUN: not llc -mtriple=riscv64 -code-model=large -relocation-model=pic \
-; RUN:   -o /dev/null %s 2>&1 | FileCheck %s --check-prefix=OFF
+; RUN:   -o - %s | FileCheck %s
+;
+; Combinations that must keep working alongside it.
+; RUN: llc -mtriple=riscv64 -code-model=large -o /dev/null %s
+; RUN: llc -mtriple=riscv64 -code-model=large -relocation-model=dynamic-no-pic -o /dev/null %s
+; RUN: llc -mtriple=riscv64 -code-model=medium -relocation-model=pic -o /dev/null %s
+; RUN: llc -mtriple=riscv64 -code-model=small -relocation-model=pic -o /dev/null %s
 
-; Prototype of the position-independent large code model proposed against
-; riscv-elf-psabi-doc#388. Not a ratified ABI, hence the opt-in flag.
+; The position-independent large code model.
 ;
 ; A pool entry holds a displacement from its own address rather than an
 ; address, which is a link-time constant and so needs no dynamic relocation:
@@ -18,8 +21,6 @@
 ; dynamic relocation, exactly as a GOT entry does. Those slots form one table
 ; per function, bootstrapped once, so each additional symbol costs a single
 ; load rather than its own pool entry and sequence.
-
-; OFF: LLVM ERROR: the large code model is not supported with position-independent code
 
 @e1 = external global i32
 @e2 = external global i32

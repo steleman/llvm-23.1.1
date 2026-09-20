@@ -16,7 +16,7 @@ As of 2026-09-19 all commits are merged and pushed to the `main` branch and to G
 | Directory | Commits | Target | Kind |
 |---|---|---|---|
 | `mcmodel-large-pic-aarch64/` | `6252702ff097` `0f3239439e52` `1d05750dd65c` `923b6ce4c476` | AArch64 | Complete implementation; RFC (`RFC-aarch64-large-pic.md`) |
-| `mcmodel-large-pic-riscv/` | `a0fc20f1045d` `b3b22127ba0b` `0d525ec45f7b` `59cd9ed34ad4` | RISCV64 | Bug fix plus a prototype behind `-riscv-large-pic`; `DESIGN.md`, `POST-388.md` |
+| `mcmodel-large-pic-riscv/` | `a0fc20f1045d` `b3b22127ba0b` `0d525ec45f7b` `59cd9ed34ad4` `ed825fc0ba39` `aa9320e2847e` | RISCV64 | Bug fix, then the model, then turning it on: `-mcmodel=large -fPIC` works from the driver; `DESIGN.md`, `POST-388.md` |
 | `mcmodel-large-tls-x86_64/` | `78e24eb023c1` | x86-64 | Bug fix |
 | `mcmodel-large-eh-riscv/` | `4fe0518a293f` | RISCV64 | 8-byte EH pointer encodings in the large model |
 | `mcmodel-large-jt-riscv/` | `98677af3cb50` | RISCV64 | Bug fix: jump tables in the function's section under the large model |
@@ -26,7 +26,9 @@ on the last AArch64 commit, but its patch 0001 applies to the tag on its own.
 The x86-64 patch applies to the tag independently. The RISCV EH patch sits on
 top of `78e24eb023c1`. The RISCV jump-table patch sits on top of
 `4fe0518a293f` and also applies to the tag on its own, except for two test RUN
-lines that use the prototype's `-riscv-large-pic`.
+lines that use `-riscv-large-pic`. **That option no longer exists** as of
+`ed825fc0ba39`, which made the model the default; those two RUN lines need the
+option dropped when the jump-table patch is rebased past it.
 
 Companion series, which implement the same models so objects interoperate:
 
@@ -44,7 +46,6 @@ to my Github very shortly.
 ---
 
 ## Where upstream stood at `llvmorg-23.1.1`
-
 
 | Target | `-mcmodel=large` with PIC |
 |---|---|
@@ -186,9 +187,12 @@ The RISCV large model loads absolute addresses from a constant pool that
 live in `.text`, and `.data.rel.ro` may be more than 2 GiB away. The psABI
 (riscv-elf-psabi-doc#388) specifies only the position-dependent large model and
 states that "Large code model is disallowed to be used with PIC code model".
-Patches 0002–0004 are therefore a proposal: off by default behind the hidden
-option `-riscv-large-pic`. `POST-388.md` is a draft follow-up for that psABI
-thread.
+Patches 0002–0004 are therefore a proposal. They were developed behind the
+hidden option `-riscv-large-pic`; patches 0005–0006 take them as normative and
+turn the feature on, so the option is gone and `-mcmodel=large -fPIC` works
+from the driver. What has not changed is the psABI: these sequences are still
+unratified, and objects built with them interoperate only with a toolchain
+using the same ones. `POST-388.md` is a draft follow-up for that psABI thread.
 
 ### 0001 — Diagnose large + PIC (bug fix)
 
@@ -267,13 +271,44 @@ then a single load:
   hoists.
 - TLS keeps the GOT-relative ±2 GiB sequences.
 
-Using it from Clang: the driver still rejects `-mcmodel=large` with PIC on
-RISCV, so build IR with Clang and compile it with `llc`:
+### 0005 — Make the model the default
+
+Takes the sequences above as normative and removes the scaffolding:
+
+- the `-riscv-large-pic` option and its accessor, and the
+  `RISCVTargetMachine.h` declaration;
+- `getEffectiveRISCVCodeModel`, whose only job was to reject large with PIC.
+  The constructor goes back to `getEffectiveCodeModel` directly;
+- the option tests in `RISCVTargetLowering::getAddr` and in call lowering.
+
+`RISCVELFTargetObjectFile::getSectionForConstant` keeps the pool in `.text`,
+but its comment is rewritten: it cited the old restriction as the reason.
+`.text` is still right, for a different reason — the entries now hold
+displacements, which are link-time constants needing no dynamic relocation.
+The slots that do need one are emitted separately into `.data.rel.ro`.
+
+`large-codemodel-pic-unsupported.ll` tested the diagnostic and is deleted; its
+coverage of the neighbouring combinations that must keep working (large static,
+large with `dynamic-no-pic`, medium and small with PIC) moves into
+`large-codemodel-pic.ll`.
+
+### 0006 — Driver
+
+- `addMCModel` stops rejecting `-mcmodel=large` with PIC on RISCV.
+- The model stays RV64-only, matching the psABI and the existing
+  `Triple.isRISCV64()` guard; `clang/test/Driver/riscv-mcmodel.c` now covers
+  that for the PIC case too.
+- `__riscv_cmodel_large` already follows the code model alone, so it needed no
+  change.
+
+Order matters: 0006 must not land before 0005, or the driver accepts a flag
+combination the backend still compiles as medium.
+
+Using it from Clang, which is now the whole story:
 
 ```sh
-clang --target=riscv64-linux-gnu -march=rv64gc -mabi=lp64d -O2 -fPIC -emit-llvm -S -o f.ll f.c
-llc -mtriple=riscv64-linux-gnu -mattr=+m,+a,+f,+d,+c -target-abi=lp64d -O2 \
-    -relocation-model=pic -code-model=large -riscv-large-pic -filetype=obj -o f.o f.ll
+clang --target=riscv64-linux-gnu -march=rv64gc -mabi=lp64d -O2 -fPIC \
+      -mcmodel=large -c -o f.o f.c
 ```
 
 ---
@@ -312,7 +347,7 @@ to `PseudoLLA` (`auipc`/`addi`, ±2 GiB), but ELF put jump tables in `.rodata`,
 which the large model allows to be further away. Links with data more than
 2 GiB from the code failed with "relocation R_RISCV_PCREL_HI20 out of range …
 references '.LJTI…'". This affected the position-dependent large model that
-the psABI specifies, as well as the prototype PIC model.
+the psABI specifies, as well as the PIC model.
 
 - `RISCVELFTargetObjectFile::shouldPutJumpTableInFunctionSection` now returns
   true for `CodeModel::Large`, so the table follows the function in its own
@@ -320,7 +355,7 @@ the psABI specifies, as well as the prototype PIC model.
   GCC does the same (`JUMP_TABLES_IN_TEXT_SECTION` for `CM_LARGE`).
 - Entry encodings are unchanged (`.quad .LBBn` static, `.word .LBBn-.LJTIn`
   PIC). Other code models keep tables in `.rodata`.
-- In the prototype PIC model the function's `.data.rel.ro` indirection table is
+- In the PIC model the function's `.data.rel.ro` indirection table is
   emitted first and the AsmPrinter switches back to the function's section, so
   the jump table still lands next to the code, with or without
   `-function-sections`.
@@ -421,12 +456,12 @@ GCC 16 (patches 05–07) implements large PIC **on by default**. It breaks the
 same constraint the same way, with displacements in code and addresses in
 `.data.rel.ro`, but with a different shape:
 
-| Aspect | LLVM prototype | GCC 16 |
+| Aspect | LLVM | GCC 16 |
 |---|---|---|
 | Local symbol | Pool entry `local-.Ltmp` (`ADD64`/`SUB64`) | Pool entry `.dword sym-.` (`ADD64`/`SUB64`) |
 | Preemptible symbol | Per-function table `.Lrvlp_tbl.<fn>`, one anchor, one load per symbol | Per-symbol `.data.rel.ro` slot reached through its own pool displacement |
 | Relocations in `.data.rel.ro` | `R_RISCV_64` / `R_RISCV_RELATIVE` | Same |
-| Enabled by | `llc -riscv-large-pic` (driver rejects the flag combination) | `-mcmodel=large -fPIC` |
+| Enabled by | `-mcmodel=large -fPIC` (since `aa9320e2847e`; `llc -riscv-large-pic` before it) | `-mcmodel=large -fPIC` |
 | TLS | GOT-relative, ±2 GiB | Same |
 | EH pointers | 0x1c/0x9c, `ADD64`/`SUB64` (`4fe0518a293f`) | Same; GCC defaults to `-fno-dwarf2-cfi-asm` in the large model so its FDE pointers are 8-byte (gas uses sdata4 for `.cfi_*` FDEs) |
 | Jump tables | In the function's section, reached with `auipc`/`addi` (`98677af3cb50`; before it in `.rodata`, out of reach with far data) | In the function's section, reached with `lla` (upstream `JUMP_TABLES_IN_TEXT_SECTION` for `CM_LARGE`) |
@@ -474,10 +509,18 @@ the relocations GNU ld and lld already relax.
   `clang -mcmodel=large -fPIC`. They link with `ld.lld` and run under
   `qemu-aarch64` at `-O1` (SelectionDAG) and `-O0` (GlobalISel), with zero
   ADRP. The MOVN (negative displacement) path was verified numerically.
-- **RISCV prototype:** shared objects keep all dynamic relocations in
+- **RISCV PIC:** shared objects keep all dynamic relocations in
   `.data.rel.ro` and leave `.text` read-only. They run under `qemu-riscv64`
   and give identical results with `--relax` and `--no-relax`. The same input
   built with the absolute pool fails to link.
+- **RISCV driver (2026-09-20, `ed825fc0ba39` and `aa9320e2847e`):** with the
+  model on by default, a freestanding program mixing a preemptible global, a
+  local global and a call, built straight through
+  `clang --target=riscv64 -mcmodel=large -fPIC`, links with `ld.lld` and
+  returns the expected value under `qemu-riscv64`. As a shared object its two
+  dynamic relocations both land inside `.data.rel.ro` and `.text` carries
+  none. `CodeGen/RISCV` (2599) and `MC/RISCV` (604) pass, as do
+  `Driver/riscv-mcmodel.c` and `Driver/mcmodel.c`.
 - **RISCV EH:** `CodeGen/RISCV`, `MC/RISCV` and `MC/ELF` pass (3466 lit
   tests).
 - **RISCV jump tables:** the new lit test fails without `98677af3cb50` and
@@ -498,15 +541,15 @@ the relocations GNU ld and lld already relax.
 | AArch64 runtime ABI matrix: large-PIC DSO + PIE, {GCC, Clang} × {GCC, Clang}, `-O2`/`-O0`; interposition, weak undefined, jump tables, computed goto, FP constants, IE/LE TLS | 24/24 with lld, ld.bfd and ld.gold (GCC 16.0.1; repeated with GCC 16.2.0) |
 | Same matrix, Clang objects from `clang -fno-addrsig -S` assembled by gas | 24/24 with lld, ld.bfd and ld.gold (GCC 16.0.1; repeated with GCC 16.2.0, also in the 5 GiB layout, 24/24). gas turns Clang's large-model FDEs into `PREL32` (it builds them from `.cfi_*` with sdata4), where the integrated assembler emits `PREL64` |
 | AArch64 far layout: freestanding static programs, data and GOT 5 GiB from the code | Runs with all three linkers; the small model fails to link (GCC 16.0.1; repeated with GCC 16.2.0: {GCC, Clang} × {GCC, Clang} objects at `-O2`/`-O0`, 24/24) |
-| RISCV runtime ABI matrix with {GCC, Clang `-riscv-large-pic`} objects | 16/16 with ld.bfd and lld (GCC 16.0.1 and 16.2.0) |
+| RISCV runtime ABI matrix with {GCC, Clang} objects (Clang via `-riscv-large-pic`, now `-mcmodel=large -fPIC`) | 16/16 with ld.bfd and lld (GCC 16.0.1 and 16.2.0) |
 | RISCV far data layout: freestanding static programs, all data 3 GiB above `.text` | GCC 16.0.1 and 16.2.0: links and runs with ld.bfd and lld, medany fails to link. With GCC 16.2.0 and `98677af3cb50`: {GCC, Clang} × {GCC, Clang} objects at `-O2`/`-O0`, 16/16 (before that commit, the 4 links with a Clang `-O0` object failed on an out-of-range jump table) |
 | RISCV far data layout, jump-table switch (static and PIC large, `-O2`/`-O0`) | With `98677af3cb50`: Clang objects 8/8 with ld.bfd and lld; without it 0/8 link. GCC 16.2.0 objects 8/8 |
 | All of the above with Clang and GCC objects built at `-O1` and `-O3` (GCC 16.2.0, 2026-09-18) | AArch64 runtime matrix 24/24 with lld, ld.bfd and ld.gold, also with Clang textual output through gas; RISCV 16/16 with lld and ld.bfd. AArch64 5 GiB layout 24/24 with the integrated assembler and with gas; RISCV 3 GiB layout 16/16 with `98677af3cb50`. Jump-table switch: Clang 8/8 with `98677af3cb50` and 0/8 without, GCC 8/8, at both levels. C++ exceptions through the runtime matrices, GCC objects only: AArch64 6/6, RISCV 4/4 (the mixed Clang/GCC RISCV exception tests in the next row were not repeated at these levels; see `mcmodel-large-eh-riscv/README`). GCC's libgcc `.eh_frame_hdr` test (64-bit table, 8-byte `eh_frame_ptr`) unchanged with lld and ld.bfd on both targets. Small/medany controls fail to link |
 | RISCV C++ exceptions across DSO and PIE with Clang, GCC and mixed objects, normal and with code 3 GiB from `.eh_frame` | 24/24 with lld and ld.bfd (GCC 16.0.1) |
 
 **RISCV jump-table gap (found and fixed 2026-09-17):** jump tables were
-emitted in `.rodata` but reached with a ±2 GiB `auipc`, in both the prototype
-and the position-dependent large model; fixed by `98677af3cb50`
+emitted in `.rodata` but reached with a ±2 GiB `auipc`, in both the PIC and
+the position-dependent large model; fixed by `98677af3cb50`
 (`mcmodel-large-jt-riscv/`, see its section above). Block addresses take the
 same lowering path but their labels are inside the function, so they were
 never affected.
@@ -521,16 +564,21 @@ issue. `-fno-addrsig` is needed only because gas has no `.addrsig` directive.
 
 ## Building
 
-The checkout's `build/` directory was configured when the tree lived under
-`/src/steleman/programming/llvm-project/20260909/`, and CMake can no longer
-regenerate it at the new path. Its binaries (`build/bin/clang`, `lld`, `llc`)
-date from 2026-09-10. They include the AArch64 series and the RISCV PIC
-prototype, but predate the x86-64 TLS, RISCV EH and RISCV jump-table
-commits. Configure a fresh directory to test the full branch.
-`../build-mcmodel-large` is one (2026-09-17: Release+assertions,
-`LLVM_ENABLE_PROJECTS=lld`, `LLVM_TARGETS_TO_BUILD="AArch64;RISCV;X86"`),
-with `llc`, `lld`, `llvm-mc` and the lit tools built but not `clang`. The
-MachO RISCV MC tests also need `llvm-otool` built.
+The checkout's `build/` directory was reconfigured in place on 2026-09-20 with
+`LLVM_TARGETS_TO_BUILD="AArch64;RISCV;X86"` and
+`LLVM_ENABLE_PROJECTS="lld;clang"`, and builds normally there; `clang`, `lld`,
+`llc`, `llvm-mc`, `opt`, `llvm-objdump`, `llvm-readobj`, `llvm-dwarfdump` and
+`llvm-otool` were rebuilt there on that date, so `ninja` reports no work to do
+and the binaries match the branch through `aa9320e2847e`. (An earlier note here
+said CMake could no longer regenerate the directory at this path; that is no
+longer the case.) The branch does not carry the RISCV EH or jump-table
+commits, so neither do those binaries.
+
+A second directory, `../build-mcmodel-large`, covers the rest of the branch
+(2026-09-17: Release+assertions, `LLVM_ENABLE_PROJECTS=lld`,
+`LLVM_TARGETS_TO_BUILD="AArch64;RISCV;X86"`), with `llc`, `lld`, `llvm-mc`
+and the lit tools built but not `clang`. The MachO RISCV MC tests also need
+`llvm-otool` built.
 
 If you build as `RelWithDebInfo` with GCC, please use `-g0` instead of plain `-g`.
 Plain `-g` creates `.debug_info` relocations that cross over the 2GB limit, and
@@ -538,5 +586,4 @@ some unittests and libraries fail to link with `ld.bfd`. Using `-g0` allows
 everything to link successfully with GCC and Binutils `ld.bfd`.
 
 My build scripts are in the [build-scripts](build-scripts) directory.
-
 

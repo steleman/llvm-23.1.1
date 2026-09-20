@@ -155,43 +155,12 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeRISCVTarget() {
   initializeRISCVPromoteConstantPass(*PR);
 }
 
-/// Prototype of the position-independent large code model proposed against
-/// riscv-elf-psabi-doc#388. The sequences are not part of any ratified ABI, so
-/// this is off by default and objects built with it interoperate with nothing.
-static cl::opt<bool> EnableLargePIC(
-    "riscv-large-pic", cl::Hidden, cl::init(false),
-    cl::desc("Prototype: allow the large code model with position-independent "
-             "code (unratified ABI, non-interoperable)"));
-
-bool llvm::riscvEnableLargePIC() { return EnableLargePIC; }
-
 static Reloc::Model getEffectiveRelocModel(const Triple &TT,
                                            std::optional<Reloc::Model> RM) {
   if (TT.isOSBinFormatMachO())
     return RM.value_or(Reloc::PIC_);
 
   return RM.value_or(Reloc::Static);
-}
-
-// The large code model is not usable as position-independent code. Its literal
-// pool entries hold absolute addresses, so under PIC they would need dynamic
-// relocations, which cannot live in the .text section the pool is emitted into
-// -- and a writable section may be further than the 2GiB that reaching the
-// pool with auipc allows. The psABI states the restriction directly: "Large
-// code model is disallowed to be used with PIC code model."
-//
-// Diagnose it here. Lowering would otherwise take the position-independent
-// path in RISCVTargetLowering::getAddr, which returns before the code model is
-// ever consulted, silently producing the same +/-2GiB sequences as the medium
-// model and quietly ignoring the requested model.
-static CodeModel::Model
-getEffectiveRISCVCodeModel(std::optional<CodeModel::Model> CM,
-                           Reloc::Model RM) {
-  CodeModel::Model Model = getEffectiveCodeModel(CM, CodeModel::Small);
-  if (Model == CodeModel::Large && RM == Reloc::PIC_ && !EnableLargePIC)
-    reportFatalUsageError(
-        "the large code model is not supported with position-independent code");
-  return Model;
 }
 
 static std::unique_ptr<TargetLoweringObjectFile> createTLOF(const Triple &TT) {
@@ -209,7 +178,7 @@ RISCVTargetMachine::RISCVTargetMachine(const Target &T, const Triple &TT,
     : CodeGenTargetMachineImpl(
           T, TT.computeDataLayout(Options.MCOptions.getABIName()), TT, CPU, FS,
           Options, getEffectiveRelocModel(TT, RM),
-          getEffectiveRISCVCodeModel(CM, getEffectiveRelocModel(TT, RM)), OL),
+          getEffectiveCodeModel(CM, CodeModel::Small), OL),
       TLOF(createTLOF(TT)) {
   initAsmInfo();
 

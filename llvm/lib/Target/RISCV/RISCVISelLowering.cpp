@@ -9908,12 +9908,11 @@ SDValue RISCVTargetLowering::getAddr(NodeTy *N, SelectionDAG &DAG,
   // is incompatible with existing code models. This also applies to non-pic
   // mode.
   if (isPositionIndependent() || Subtarget.allowTaggedGlobals()) {
-    // Prototype large PIC model. Without this the code model is ignored on
-    // this path entirely and the +/-2GiB sequences below are used whatever was
-    // requested.
+    // The large code model needs full-range sequences. Without this the code
+    // model is ignored on this path entirely and the +/-2GiB sequences below
+    // are used whatever was requested.
     if (getTargetMachine().getCodeModel() == CodeModel::Large &&
-        isPositionIndependent() && !Subtarget.allowTaggedGlobals() &&
-        riscvEnableLargePIC()) {
+        isPositionIndependent() && !Subtarget.allowTaggedGlobals()) {
       if (auto *G = dyn_cast<GlobalAddressSDNode>(N))
         return getLargePICGlobalAddress(G, DL, Ty, DAG, /*Indirect=*/!IsLocal);
     }
@@ -26140,10 +26139,10 @@ SDValue RISCVTargetLowering::LowerCall(CallLoweringInfo &CLI,
   // split it and then direct call can be matched by PseudoCALL.
   bool CalleeIsLargeExternalSymbol = false;
   if (getTargetMachine().getCodeModel() == CodeModel::Large) {
-    // Under the prototype large PIC model a call target is materialized the
-    // same way as any other address: the absolute pool entry used below would
-    // need a dynamic relocation in .text.
-    bool LargePIC = isPositionIndependent() && riscvEnableLargePIC();
+    // Under the large PIC model a call target is materialized the same way as
+    // any other address: the absolute pool entry used below would need a
+    // dynamic relocation in .text.
+    bool LargePIC = isPositionIndependent();
     if (auto *S = dyn_cast<GlobalAddressSDNode>(Callee)) {
       if (LargePIC) {
         bool IsLocal = getTargetMachine().shouldAssumeDSOLocal(S->getGlobal());

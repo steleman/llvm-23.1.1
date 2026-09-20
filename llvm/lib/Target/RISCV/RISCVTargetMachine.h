@@ -21,9 +21,6 @@
 
 namespace llvm {
 
-/// True when the prototype position-independent large code model is enabled
-/// with -riscv-large-pic. Not a ratified ABI; see RISCVTargetMachine.cpp.
-bool riscvEnableLargePIC();
 class RISCVTargetMachine : public CodeGenTargetMachineImpl {
   std::unique_ptr<TargetLoweringObjectFile> TLOF;
   mutable StringMap<std::unique_ptr<RISCVSubtarget>> SubtargetMap;

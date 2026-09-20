@@ -164,9 +164,10 @@ MCSection *RISCVELFTargetObjectFile::getSectionForConstant(
     const Function *F) const {
 
   // The large code model has to put constant pools close to the program, so we
-  // put them in the .text section. Large code model doesn't support PIC, so
-  // there should be no dynamic relocations that would require `.data.rel.ro`
-  // (which could be too far away anyway).
+  // put them in the .text section. Under PIC the entries hold displacements
+  // rather than addresses, which are link-time constants, so .text remains
+  // correct: nothing here needs a dynamic relocation. The indirection slots
+  // that do are emitted separately into .data.rel.ro by the AsmPrinter.
   if (TM->getCodeModel() == CodeModel::Large) {
     if (F)
       return SectionForGlobal(F, SectionKind::getText(), *TM);
