@@ -8,6 +8,7 @@ This is my research fork of LLVM 23.1.1. It contains several significant changes
 - `1005826ab2771b84a2db45c19adfb270b5ee1cb7`: support for building IREE 3.11.0.
 - `7262ca593830da72101db6e65537de3368dd092f`: Bug fixes for .eh_frame and FDE
                                               relocations on RISCV with -mcmodel=large -fPIC.
+- `ba399d121720d6ae1bc9ee535bba2fd87e8b8a43`: wired -mcmodel=large -fPIC to the clang driver.
 
 ## Notes:
 
