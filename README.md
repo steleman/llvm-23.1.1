@@ -23,7 +23,14 @@ with code compiled by GCC + Binutils, or with code compiled with LLVM Upstream.
 
 - The option `-mcmodel=large -fPIC` is *not* supported on RISCV32.
 
-Relevant documentation files:
+-----
+
+I will check in patched versions of GCC 16.2.0 and Binutils 2.46.1 that are ABI
+Compatible with this LLVM very shortly.
+
+-----
+
+### Relevant documentation files:
 
 - [README.AArch64](README.AArch64.md)
 - [RFC-AArch64-MCModel-Large-PIC](RFC-AArch64-MCModel-Large-PIC.md)
@@ -32,6 +39,8 @@ Relevant documentation files:
 - [RISCV-POST-388](RISCV-POST-388.md)
 - [README.x86_64](README.x86_64.md)
 - [README.MCMODEL-LARGE](README.MCMODEL-LARGE.md)
+
+-----
 
 The rest below is the canonical README from LLVM Upstream.
 
